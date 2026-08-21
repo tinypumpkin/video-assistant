@@ -1,0 +1,2016 @@
+/* Video Assistant — 侧边栏样式。主色遵循 Tab Assistant design_token（Indigo/Violet 品牌体系），跟随系统深色模式。 */
+
+:root {
+  --accent: #6366f1;
+  --accent-gradient: linear-gradient(135deg, #6366f1, #8b5cf6);
+  --bg: #f6f8fb;
+  --bg-soft: #f1f5f9;
+  --bg-hover: #eef2ff;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --border: #e5e7eb;
+  --danger: #ef4444;
+  --ring: rgba(99, 102, 241, 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181a;
+    --bg-soft: #1f2022;
+    --bg-hover: #27282b;
+    --text: #e3e5e7;
+    --text-muted: #9499a0;
+    --border: #2f3134;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * 雪碧图只是路径数据的仓库，不参与渲染。用零尺寸而不是 display:none——
+ * 后者在部分浏览器上会让 <use> 引不到里面的 symbol。
+ */
+.sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+/* symbol 里只存路径，描边样式统一在这里给，图形自带 fill 的会盖掉它 */
+.icon {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 空状态里的大图标：放大之后线条要相应变细，不然显得笨重 */
+.icon.state-icon {
+  width: 30px;
+  height: 30px;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  stroke-width: 1.1;
+}
+
+/*
+ * hidden 属性的「display:none」来自浏览器默认样式，作者样式里任何一条
+ * display 都能盖过它——而本页大量元素既写了 display:flex 又靠 hidden 控制
+ * 显隐（进度条、搜索栏、跟随浮标、被搜索过滤掉的字幕行……），
+ * 于是它们全都藏不住。在这里统一兜住，比在每个选择器上补 [hidden] 可靠。
+ */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  /* 解释浮层用 absolute 贴在面板底部，需要 body 提供定位上下文 */
+  position: relative;
+  height: 100vh;
+  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* ---------- 头部 ---------- */
+
+.app-header {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.app-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.app-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.app-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.icon-btn,
+.ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* 纯图标按钮收窄内边距，让点击区域接近正方形 */
+.icon-btn,
+.ghost-btn.icon-only {
+  padding: 4px 6px;
+}
+
+.icon-btn svg,
+.ghost-btn svg {
+  flex: 0 0 auto;
+}
+
+.icon-btn:hover,
+.ghost-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 复制、存为手记与存入 AI 记共用同一套完成反馈。 */
+.ghost-btn.is-success,
+.ghost-btn.is-success:hover {
+  color: #087a3e;
+  background: #e6f7ec;
+  border-color: transparent;
+}
+
+.video-meta {
+  margin-top: 10px;
+}
+
+.video-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  /* 长标题最多两行，别把字幕区挤没了 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.video-submeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.badge {
+  padding: 1px 7px;
+  font-size: 11px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 999px;
+}
+
+.badge-muted {
+  color: var(--text-muted);
+  background: var(--bg-soft);
+}
+
+/* ---------- 标签页 ---------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 12px -14px -12px;
+  padding: 0 10px;
+  border-top: 1px solid var(--border);
+}
+
+.tab {
+  padding: 9px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  /* 字重 500 拉开层级：13px 字号下 active 与 idle 只靠颜色区分不够,
+     中文字形密度高，字重差异比 1px 字号差更易辨认 */
+  font-weight: 500;
+}
+
+/* ---------- 主体 ---------- */
+
+.content {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.state {
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.state-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.state-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.state-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.primary-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  color: #fff;
+  background: var(--accent-gradient);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.primary-btn:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.primary-btn.with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.link-btn {
+  align-self: center;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+#errorTitle {
+  color: var(--danger);
+}
+
+.spinner {
+  width: 22px;
+  height: 22px;
+  margin: 0 auto 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- 面板通用 ---------- */
+
+.panel-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* 行高从 44px 压到 ~38px：原 8px 上下内边距配 12px 控件文字,
+     是“三层里最高行配最小字”的倒挂；压到 6px 与内容密度匹配 */
+  padding: 6px 14px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-toolbar-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.notes-export-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.notes-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.notes-export-select,
+.ai-note-export-select {
+  color: var(--muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.notes-export-select {
+  min-height: 26px;
+  padding: 3px 26px 3px 8px;
+  font-size: 11px;
+}
+
+.notes-export-select:disabled,
+.ai-note-export-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.notes-delete-toggle {
+  margin-left: auto;
+}
+
+.notes-delete-toggle.active,
+.danger-btn {
+  color: #c73552;
+  border-color: #efb8c5;
+}
+
+.danger-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.notes-delete-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 14px;
+  background: #fff8fa;
+  border-bottom: 1px solid var(--border);
+}
+
+.notes-delete-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.notes-delete-actions .ghost-btn {
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
+.note-selection {
+  width: 16px;
+  height: 16px;
+  margin: 0 8px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.notes-pagination {
+  display: flex;
+  justify-content: center;
+  padding: 4px 14px 14px;
+}
+
+.section-heading {
+  margin: 18px 14px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.segmented {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented-btn {
+  /* 与 .ghost-btn 同高 (~27px)：原 3px 内边距只有 21px,
+     toolbar 内三控件高度不一(21/27/15)视觉参差。
+     line-height 对齐 ghost 的 inline-flex 行盒 (~17px) */
+  padding: 4px 10px;
+  line-height: 17px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.segmented-btn.active {
+  color: #fff;
+  background: var(--accent-gradient);
+}
+
+.muted {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.transcript-list {
+  padding: 6px 0 32px;
+}
+
+.segment {
+  display: flex;
+  gap: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+
+.segment:hover {
+  background: var(--bg-hover);
+}
+
+.segment-time {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  padding-top: 1px;
+}
+
+.segment-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.7;
+  /* 字幕里可能出现长串英文/URL，别把面板撑出横向滚动条 */
+  overflow-wrap: anywhere;
+}
+
+.segment-save-btn {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-top: 1px;
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
+.segment.active {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-left-color: var(--accent);
+}
+
+/* 双语：原文在上、译文在下，各占一行 */
+.segment-source,
+.segment-translation {
+  display: block;
+}
+
+.segment-source {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.segment-translation.pending {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.segmented-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ---------- 进度条 ---------- */
+
+.progress {
+  width: 100%;
+  height: 4px;
+  margin: 10px 0;
+  overflow: hidden;
+  background: var(--border);
+  border-radius: 999px;
+}
+
+.progress-bar {
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px 0;
+}
+
+/* ---------- 字幕搜索与跟随浮标 ---------- */
+
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 0;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: var(--accent);
+}
+
+.search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.search-hit {
+  padding: 0 1px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  border-radius: 3px;
+}
+
+.follow-pill {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: #fff;
+  background: var(--accent-gradient);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  z-index: 30;
+}
+
+.follow-pill:hover {
+  filter: brightness(1.06);
+}
+
+.progress-row .progress {
+  flex: 1;
+  margin: 0;
+}
+
+.muted-small {
+  font-size: 12px;
+}
+
+/* ---------- 概览 ---------- */
+
+.chapter-list,
+.quote-list,
+.notes-list {
+  padding: 0 14px 8px;
+}
+
+.chapter,
+.quote,
+.note {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.chapter {
+  cursor: pointer;
+}
+
+.chapter:hover,
+.quote:hover {
+  border-color: var(--accent);
+}
+
+.entry-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.entry-time {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.entry-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.entry-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.quote .entry-text {
+  color: var(--text);
+}
+
+.entry-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* ---------- 笔记 ---------- */
+
+.note .entry-head {
+  align-items: center;
+}
+
+/* 笔记正文是从视频里摘下来的一句话，加引号跟自己写的批注区分开 */
+.note:not(.note-ai-chat):not(.note-memo) .entry-text:not(.markdown-body)::before {
+  content: "“";
+}
+
+.note:not(.note-ai-chat):not(.note-memo) .entry-text:not(.markdown-body)::after {
+  content: "”";
+}
+
+/* 时间戳做成粉色药丸，一眼看出能点——原来是个 span，可点但没有任何提示 */
+.time-btn {
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.time-btn:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+/* 删除挪到卡片右上角，从操作行里让出位置给「播放 / 复制 / 链接」 */
+.note-delete {
+  margin-left: auto;
+  padding: 3px;
+  border-color: transparent;
+}
+
+.note-delete:hover {
+  color: var(--danger);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.note-meta {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.note-notice {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--danger);
+}
+
+.note-notice.muted {
+  color: var(--text-muted);
+}
+
+.memo-panel {
+  padding: 12px;
+}
+
+.memo-composer {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.memo-composer label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.memo-composer textarea {
+  width: 100%;
+  height: 82px;
+  min-height: 80px;
+  resize: vertical;
+  padding: 10px;
+  font: inherit;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+}
+
+.memo-panel .memo-list {
+  /* 记录卡片与上方输入框的外框保持同一条左右边线。 */
+  padding: 0 0 8px;
+}
+
+.memo-composer textarea:focus {
+  border-color: var(--accent);
+}
+
+.memo-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.memo-created {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.note-memo .entry-text {
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+/* 快捷键手记的视频截图缩略图：贴正文上方，点开看大图。 */
+.memo-shot {
+  display: block;
+  width: 100%;
+  max-width: 360px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  cursor: zoom-in;
+  margin-bottom: 8px;
+}
+
+.memo-shot:hover {
+  filter: brightness(1.05);
+}
+
+/* 笔记正文由安全 Markdown 渲染器生成块级元素，沿用问 AI 的排版规则。 */
+.note .entry-text.markdown-body {
+  white-space: normal;
+}
+
+.note-editor {
+  width: 100%;
+  min-height: 92px;
+  padding: 9px 10px;
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  outline: none;
+}
+
+.note-edit-actions {
+  margin-top: 8px;
+}
+
+/* ---------- 问 AI ---------- */
+
+#chatPanel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.chat-sticky {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  background: var(--bg);
+  box-shadow: 0 -1px 0 var(--border);
+}
+
+.chat-messages {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.chat-messages:empty {
+  flex-grow: 0;
+}
+
+.chat-empty {
+  flex: 1 1 auto;
+  padding: 46px 18px 20px;
+  text-align: center;
+}
+
+.chat-message {
+  max-width: 92%;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.chat-message.user {
+  align-self: flex-end;
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  border-bottom-right-radius: 3px;
+}
+
+.chat-message.assistant {
+  align-self: flex-start;
+  background: transparent;
+  border-color: transparent;
+  border-bottom-left-radius: 3px;
+  max-width: 96%;
+  padding: 2px 0;
+}
+
+.chat-message.assistant .chat-message-text {
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: normal;
+}
+
+.chat-message.error {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 7%, var(--bg));
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
+}
+
+.chat-message-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Markdown 完成态不继承纯文本气泡的 pre-wrap，否则标签之间的换行文本也会
+   参与排版，看起来像模型额外输出了空行。 */
+.chat-message.assistant .markdown-body {
+  white-space: normal;
+}
+
+.chat-message.assistant .markdown-body p {
+  margin: 0 0 8px;
+}
+
+.chat-message.assistant .markdown-body ul,
+.chat-message.assistant .markdown-body ol {
+  margin: 6px 0 8px;
+  padding-left: 22px;
+}
+
+.chat-message.assistant .markdown-body li + li {
+  margin-top: 2px;
+}
+
+/* 模型常用空行分隔列表项，markdown-it 会生成 li > p；清掉这层段落外距，
+   避免 p 与 li 的间距叠加。 */
+.chat-message.assistant .markdown-body li > p {
+  margin: 0;
+}
+
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body blockquote,
+.markdown-body pre {
+  margin: 0 0 9px;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin: 12px 0 6px;
+  font-size: 1em;
+  line-height: 1.4;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 20px;
+}
+
+.markdown-body li + li {
+  margin-top: 4px;
+}
+
+.markdown-body code {
+  padding: 1px 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.92em;
+  background: var(--bg-hover);
+  border-radius: 4px;
+}
+
+.markdown-body pre {
+  overflow-x: auto;
+  padding: 9px 10px;
+  background: var(--bg-hover);
+  border-radius: 7px;
+}
+
+.markdown-body pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.markdown-body blockquote {
+  padding-left: 10px;
+  color: var(--text-muted);
+  border-left: 3px solid var(--accent);
+}
+
+.markdown-body a {
+  color: var(--accent);
+}
+
+/* ---------- Markdown 表格（移植自 tab-assistant，变量化适配亮暗主题） ---------- */
+
+.markdown-body table {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  max-width: 100%;
+  margin: 10px 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow-x: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12.5px;
+}
+
+.markdown-body th,
+.markdown-body td {
+  padding: 7px 10px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-body th {
+  background: var(--bg-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.markdown-body tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--bg-soft) 55%, transparent);
+}
+
+.markdown-body tr:last-child td {
+  border-bottom: 0;
+}
+
+.markdown-body th:last-child,
+.markdown-body td:last-child {
+  border-right: 0;
+}
+
+/* ---------- Mermaid 交互卡片（移植自 tab-assistant mermaid-widget） ---------- */
+
+.mermaid-widget {
+  margin: 12px 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  /* 气泡内卡片贴边时收回外距 */
+}
+
+.chat-message .mermaid-widget {
+  margin: 8px 0;
+}
+
+.mermaid-widget__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+.mermaid-widget__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+}
+
+.mermaid-widget__title svg,
+.mermaid-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mermaid-widget__toolbar {
+  display: flex;
+  gap: 2px;
+}
+
+.mermaid-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.mermaid-btn:hover {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+
+.mermaid-btn:active {
+  transform: scale(0.94);
+}
+
+.mermaid-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 当前模式对应按钮高亮 */
+.mermaid-widget[data-mode="preview"] .mermaid-btn--preview,
+.mermaid-widget[data-mode="code"] .mermaid-btn--code {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+
+/* 源码模式下这些按钮无意义，隐藏 */
+.mermaid-widget[data-mode="preview"] .mermaid-btn--copy,
+.mermaid-widget[data-mode="code"] .mermaid-btn--download,
+.mermaid-widget[data-mode="code"] .mermaid-btn--reset {
+  display: none;
+}
+
+.mermaid-widget--copied .mermaid-btn--copy {
+  color: #16a34a;
+}
+
+.mermaid-widget__body {
+  position: relative;
+}
+
+.mermaid-widget__code {
+  margin: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.mermaid-widget__code code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.mermaid-widget__preview {
+  height: 240px;
+  overflow: hidden;
+  cursor: grab;
+  background:
+    radial-gradient(color-mix(in srgb, var(--border) 80%, transparent) 1px, transparent 1px)
+    0 0 / 18px 18px,
+    var(--bg);
+}
+
+.mermaid-widget__stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: 16px;
+}
+
+.mermaid-widget__stage--dragging {
+  cursor: grabbing;
+}
+
+.mermaid-widget__diagram {
+  transform-origin: center center;
+}
+
+.mermaid-widget__diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-widget[data-mode="code"] .mermaid-widget__code {
+  display: block;
+}
+
+.mermaid-widget[data-mode="code"] .mermaid-widget__preview {
+  display: none;
+}
+
+.mermaid-widget[data-mode="preview"] .mermaid-widget__code {
+  display: none;
+}
+
+.mermaid-widget[data-mode="preview"] .mermaid-widget__preview {
+  display: block;
+}
+
+/* mermaid 解析失败的兜底样式（源码回退显示） */
+.mermaid-widget__diagram:not(:has(svg)) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+
+.overview-prompt-editor {
+  margin: 14px;
+  padding: 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.overview-prompt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.overview-prompt-reset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.overview-prompt-reset-actions .ghost-btn {
+  box-sizing: border-box;
+  min-width: 140px;
+}
+
+.overview-prompt-editor textarea {
+  display: block;
+  width: 100%;
+  min-height: 140px;
+  padding: 9px 10px;
+  resize: vertical;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+}
+
+.overview-prompt-editor textarea:focus {
+  border-color: var(--accent);
+}
+
+.overview-prompt-editor .muted {
+  display: block;
+  margin-top: 7px;
+  font-size: 11px;
+}
+
+.video-notes-empty {
+  padding-bottom: 8px;
+}
+
+.note-generation-hero {
+  padding: 52px 24px 34px;
+}
+
+.note-generation-hero .state-title {
+  font-size: 16px;
+}
+
+.note-generation-hero .state-text {
+  max-width: 620px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.note-generation-hero .primary-btn {
+  min-width: 126px;
+  padding: 9px 18px;
+  font-size: 14px;
+}
+
+.note-generate-status {
+  min-height: 20px;
+  margin-top: 10px !important;
+  color: var(--danger);
+}
+
+.note-generation-loading {
+  display: grid;
+  min-height: 360px;
+  place-content: center;
+  justify-items: center;
+  gap: 16px;
+  padding: 28px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg));
+}
+
+.note-generation-loading p {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.note-generation-spinner {
+  width: 34px;
+  height: 34px;
+  border: 4px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: note-generation-spin 0.85s linear infinite;
+}
+
+@keyframes note-generation-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.note-template-picker {
+  margin: 0 14px 14px;
+  padding: 14px 16px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.note-template-picker__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.note-template-picker__row label {
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.note-template-picker__row select {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 34px 7px 11px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background-color: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.note-template-picker__row select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+  outline: none;
+}
+
+.note-template-picker .muted {
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+.note-prompt-editor {
+  margin-top: 0;
+}
+
+.note-prompt-editor label {
+  font-size: 14px;
+}
+
+#memoEmpty {
+  padding-top: 54px;
+  padding-bottom: 54px;
+}
+
+.chat-message .entry-actions {
+  margin-top: 7px;
+}
+
+.chat-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 24px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+/* 与 Tab Assistant 一致，等待首个流式片段时显示紧凑的环形状态指示。 */
+.chat-thinking-spinner {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid color-mix(in srgb, var(--text) 20%, transparent);
+  border-top-color: var(--text);
+  border-radius: 50%;
+  animation: chat-thinking-spin 0.82s linear infinite;
+}
+
+@keyframes chat-thinking-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 打字机光标：流式期间跟随文字末尾闪烁，完成后随 .chat-streaming 一同移除 */
+.chat-streaming:not(.chat-thinking)::after {
+  content: "▍";
+  margin-left: 1px;
+  color: var(--accent);
+  animation: chat-cursor-blink 0.9s steps(1) infinite;
+}
+
+@keyframes chat-cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.chat-composer {
+  padding: 10px 14px 12px;
+  background: var(--bg);
+}
+
+/* ---------- 输入区：胶囊输入卡（移植自 tab-assistant markd-chat-input-area） ---------- */
+
+.chat-input-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  min-height: 64px;
+  padding: 10px 12px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg) 98%, transparent),
+    color-mix(in srgb, var(--bg-soft) 94%, transparent)
+  );
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 18px;
+  box-shadow: 0 10px 24px color-mix(in srgb, #0f172a 6%, transparent);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.chat-input-card:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent),
+    0 12px 28px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.chat-composer textarea {
+  display: block;
+  flex: 1;
+  width: 100%;
+  min-height: 44px;
+  max-height: 180px;
+  padding: 6px 8px;
+  resize: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  outline: none;
+  box-shadow: none;
+}
+
+.chat-composer textarea:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* 发送按钮：40px 圆角方形图标按钮（纸飞机，参考 tab-assistant markd-chat-send） */
+.send-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  color: #fff;
+  background: var(--accent-gradient);
+  border: none;
+  border-radius: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: filter 0.15s, transform 0.1s;
+}
+
+.send-btn-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.send-btn-icon:hover {
+  filter: brightness(1.08);
+}
+
+.send-btn-icon:active {
+  transform: scale(0.94);
+}
+
+.send-btn-icon:disabled {
+  cursor: wait;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  filter: none;
+}
+
+.chat-toolbar {
+  flex-wrap: wrap;
+}
+
+.chat-context-menu {
+  position: relative;
+  margin-left: auto;
+}
+
+.chat-context-menu summary {
+  list-style: none;
+  padding: 4px 9px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.chat-context-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-context-menu summary::after {
+  margin-left: 5px;
+  content: "▾";
+}
+
+.chat-context-menu[open] summary {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chat-context-options {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 12;
+  display: grid;
+  gap: 7px;
+  min-width: 138px;
+  padding: 9px 10px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 16%, transparent);
+}
+
+.chat-context-options label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chat-context-options input {
+  accent-color: var(--accent);
+}
+
+/* design_token §6.3：Focus Ring 统一兜底 */
+button:focus-visible,
+[tabindex]:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 聊天框由外层 focus-within 统一表达焦点；不要再给 textarea 画第二层框。 */
+.chat-composer textarea:focus-visible {
+  outline: none;
+  outline-offset: 0;
+}
+
+.chat-composer button:disabled,
+.chat-composer textarea:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.note-ai-chat .entry-text {
+  white-space: pre-wrap;
+}
+
+.note-source-badge {
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-radius: 999px;
+}
+
+/* 等待字幕回填的手记：pill 呼吸一下，回填/失败后随重渲染消失。 */
+.note-pending-transcript {
+  animation: note-pending-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes note-pending-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+kbd {
+  padding: 1px 5px;
+  font-family: inherit;
+  font-size: 11px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+/* ---------- 划词解释 ---------- */
+
+.explain-tooltip {
+  position: fixed;
+  z-index: 20;
+}
+
+.explain-trigger {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #fff;
+  background: var(--accent-gradient);
+  border: none;
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+}
+
+/* 位置由 JS 贴到选中文字旁边，这里只定宽和外观 */
+.explain-popover {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 21;
+  width: min(340px, calc(100vw - 16px));
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+
+/* 指向选中文字的小三角，横向位置由 JS 通过 --arrow-x 给出 */
+.explain-popover::after {
+  content: "";
+  position: absolute;
+  left: var(--arrow-x, 50%);
+  width: 10px;
+  height: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.explain-popover[data-placement="top"]::after {
+  bottom: -6px;
+  border-top-color: transparent;
+  border-left-color: transparent;
+}
+
+.explain-popover[data-placement="bottom"]::after {
+  top: -6px;
+  border-right-color: transparent;
+  border-bottom-color: transparent;
+}
+
+.explain-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.explain-term {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explain-body {
+  margin: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+/* ==================== 笔记思维导图 ==================== */
+
+.ai-note-action-bar {
+  position: sticky;
+  /* 笔记范围栏已占据第一层吸顶位置，功能栏紧随其下。 */
+  top: 40px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 14px 5px;
+  background: color-mix(in srgb, var(--bg) 96%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+}
+
+.ai-note-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-soft);
+  border: 1px solid transparent;
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.ai-note-tool-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+
+.ai-note-export-control {
+  display: inline-flex;
+}
+
+.ai-note-export-select {
+  inline-size: 82px;
+  min-height: 32px;
+  padding: 6px 22px 6px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-soft);
+  border-color: transparent;
+  border-radius: 14px;
+}
+
+.ai-note-export-select:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+
+.ai-note-tool-btn.is-success,
+.ai-note-tool-btn.is-success:hover {
+  color: #087a3e;
+  background: #e6f7ec;
+  border-color: transparent;
+}
+
+.ai-note-tool-btn .icon,
+.ai-note-tool-btn > svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.ai-note-tool-btn .ai-note-view-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.ai-note-view-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  min-height: 32px;
+  background: rgba(248, 250, 252, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+.ai-note-view-group .ai-note-tool-btn {
+  min-height: 24px;
+  height: 24px;
+  padding: 0 12px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ai-note-view-group .ai-note-view-btn.active {
+  color: var(--text);
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(99, 102, 241, 0.28),
+    0 8px 18px rgba(99, 102, 241, 0.14);
+}
+
+.ai-note-view-group .ai-note-tool-btn:hover {
+  color: var(--text);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.ai-note-view-group .ai-note-view-btn.active:hover {
+  background: #fff;
+}
+
+.ai-note-delete-btn {
+  color: var(--text);
+}
+
+.ai-note-delete-btn:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg));
+}
+
+.ai-note-save-btn {
+  color: #fff;
+  background: var(--accent);
+}
+
+.ai-note-save-btn:hover {
+  color: #fff;
+  background: color-mix(in srgb, var(--accent) 88%, #000);
+}
+
+.notes-list.ai-document-list {
+  padding: 12px 18px 20px;
+}
+
+.ai-note-document {
+  position: relative;
+  padding: 24px 4px 18px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.ai-note-document-selection {
+  position: absolute;
+  top: 8px;
+  right: 4px;
+}
+
+.ai-note-document-body {
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.ai-note-document-body h1 {
+  margin: 0 0 28px;
+  font-size: clamp(26px, 4vw, 34px);
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.ai-note-document-body h2 {
+  margin: 30px 0 12px;
+  font-size: 22px;
+  line-height: 1.35;
+}
+
+.ai-note-document-body h3 {
+  margin: 22px 0 10px;
+  font-size: 17px;
+  line-height: 1.45;
+}
+
+.ai-note-document-body h4,
+.ai-note-document-body h5,
+.ai-note-document-body h6 {
+  margin: 18px 0 8px;
+  font-size: 15px;
+}
+
+.ai-note-document-body p,
+.ai-note-document-body ul,
+.ai-note-document-body ol,
+.ai-note-document-body blockquote,
+.ai-note-document-body pre {
+  margin-bottom: 14px;
+}
+
+.ai-note-document-body ul,
+.ai-note-document-body ol {
+  padding-left: 26px;
+}
+
+.ai-note-document-body li + li {
+  margin-top: 6px;
+}
+
+.ai-note-document-editor {
+  min-height: 460px;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.notes-mindmap-panel {
+  position: relative;
+  flex: 1;
+  min-height: 520px;
+  margin: 12px 14px 18px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 14px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.notes-mindmap-svg {
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+  display: block;
+  cursor: grab;
+}
+
+.notes-mindmap-svg:active {
+  cursor: grabbing;
+}
+
+/* markmap 节点文字与主题适配 */
+.notes-mindmap-svg .markmap-foreign {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.notes-mindmap-svg .markmap-node text {
+  fill: var(--text-muted);
+}
+
+/* mermaid 代码块增强：源码兜底展示样式 */
+.mermaid-block {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--bg-muted, rgba(0, 0, 0, 0.03));
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+/* KaTeX 显示公式在笔记卡片里的边距 */
+.markdown-body .katex-display {
+  margin: 8px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.markdown-body .katex {
+  font-size: 1em;
+}

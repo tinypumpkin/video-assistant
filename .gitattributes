@@ -1,0 +1,12 @@
+# Windows 侧 git 的 core.autocrlf=true 会在检出时把文本写成 CRLF，
+# 而打包脚本直接复制工作区文件——prompts/*.md 的代码块解析按 \n 断行，
+# 一旦混进 \r，「概览」在打出来的包里会整个失效。统一钉成 LF。
+* text=auto eol=lf
+
+# gitattributes 防止 git 把二进制当文本改写；打包自检同理，二进制字体
+# （woff2 等）的字节流天然含 \r 字节，不能当 CRLF 文本误报。
+*.png binary
+*.zip binary
+*.woff2 binary
+*.woff binary
+*.ttf binary

@@ -1,0 +1,19 @@
+node_modules/
+.npmrc
+dist/
+output/
+*.zip
+*.crx
+.DS_Store
+*.log
+.playwright-cli/
+
+# 上游参考源码是本地 git clone，不进入本仓库历史
+# （获取：git clone https://github.com/zarazhangrui/youtube-digest references/youtube-digest）
+references/
+
+# 本地工作文件与上架文案，不进仓库
+.hermes/
+analysis/
+design-qa.md
+STORE-LISTING.md

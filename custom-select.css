@@ -1,0 +1,178 @@
+/* Tab Assistant 风格的可访问下拉框。原生 select 仍是值与表单状态的唯一事实源。 */
+:root {
+  --custom-select-surface: #fff;
+}
+
+.custom-select {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.custom-select--template {
+  width: min(260px, 58%);
+}
+
+.custom-select--export {
+  width: 88px;
+  min-width: 88px;
+}
+
+.custom-select--model {
+  width: 42px;
+  min-width: 42px;
+}
+
+.custom-select > select {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100% !important;
+  margin: 0;
+  background-image: url("assets/icons/chevron-down.svg");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 13px 13px;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+
+.custom-select--model > select {
+  background-position: center;
+}
+
+.custom-select__hit-area {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: inherit;
+  cursor: pointer;
+}
+
+.custom-select__hit-area:disabled {
+  cursor: not-allowed;
+}
+
+.custom-select__hit-area:focus,
+.custom-select__hit-area:focus-visible {
+  outline: none;
+}
+
+.custom-select:hover > select:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent, #6366f1) 48%, var(--border, #e5e7eb));
+}
+
+.custom-select.is-open > select,
+.custom-select:focus-within > select {
+  border-color: #766df4 !important;
+  box-shadow:
+    0 0 0 3px rgba(99, 102, 241, 0.2),
+    inset 0 0 0 1px rgba(99, 102, 241, 0.28) !important;
+  outline: none !important;
+}
+
+.custom-select__menu {
+  position: fixed;
+  z-index: 1000;
+  display: none;
+  max-height: min(260px, calc(100vh - 20px));
+  padding: 4px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  color: var(--text, #0f172a);
+  background: var(--custom-select-surface);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 11px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+  overscroll-behavior: contain;
+}
+
+.custom-select__menu.is-open {
+  display: block;
+}
+
+.custom-select__option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 40px 8px 16px;
+  overflow: hidden;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text, #0f172a);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.custom-select__option:hover,
+.custom-select__option.is-active {
+  background: color-mix(in srgb, var(--accent, #6366f1) 8%, transparent);
+}
+
+.custom-select__option[aria-selected="true"] {
+  color: var(--accent, #6366f1);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent, #6366f1) 10%, transparent);
+}
+
+.custom-select__option[aria-selected="true"]::after {
+  position: absolute;
+  right: 14px;
+  width: 16px;
+  height: 16px;
+  content: "";
+  background: url("assets/icons/check.svg") center / 16px 16px no-repeat;
+}
+
+.custom-select__option:disabled {
+  color: var(--text-muted, #64748b);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.custom-select__menu::-webkit-scrollbar {
+  width: 10px;
+}
+
+.custom-select__menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-select__menu::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.72);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+@media (max-width: 460px) {
+  .custom-select--template {
+    width: min(210px, 58%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .custom-select > select {
+    transition: none;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --custom-select-surface: #1f2022;
+  }
+}
