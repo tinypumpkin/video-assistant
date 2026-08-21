@@ -22,7 +22,7 @@
 
 ---
 
-> ⚠️ **Note**: This is a personal open-source extension distributed via GitHub Releases, not the Chrome Web Store. All AI and caption services use your own API keys. The extension itself has no backend, no accounts, and no telemetry.
+> ⚠️ **Note**: This is a personal open-source extension, currently distributed via GitHub Releases. All AI and caption services use your own API keys. The extension itself has no backend, no accounts, and no telemetry.
 
 ---
 
@@ -71,7 +71,7 @@
 
 - Language follows settings across **all three layers**: AI output, side panel UI, injected page buttons
 - Injected buttons refresh in place when the language changes
-- Both sites share the same ocean-blue Digest button
+- Both sites use the same SVG icon for the Video Assistant side panel button
 
 ---
 
