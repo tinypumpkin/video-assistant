@@ -662,6 +662,7 @@ async function ensureHostPermission(baseUrl) {
 // 协议差异由 lib/ai-provider.js 处理，这里只管超时、大小上限、空响应的诊断与重试。
 async function requestAiCompletion({
   messages,
+  images = [],
   maxTokens,
   temperature,
   responseFormat,
@@ -688,6 +689,7 @@ async function requestAiCompletion({
     try {
       const result = await requestProviderCompletion(provider.settings, {
         messages,
+        images,
         maxTokens,
         temperature,
         responseFormat,
@@ -715,7 +717,7 @@ async function requestAiCompletion({
 // 单个 Provider 内部仍保留空响应的自愈重试；用尽后才交给有序回退路由判断。
 async function requestProviderCompletion(
   settings,
-  { messages, maxTokens, temperature, responseFormat },
+  { messages, images, maxTokens, temperature, responseFormat },
 ) {
   const check = BILI_SETTINGS.validate(settings);
   if (!check.ok) {
@@ -728,12 +730,15 @@ async function requestProviderCompletion(
   let format = responseFormat;
   let tokens = maxTokens;
   let diagnosis = null;
+  const providerMessages = settings.supportsVision
+    ? BILI_AI_PROVIDER.attachImagesToLastUserMessage(settings.protocol, messages, images)
+    : messages;
 
   // 空响应有两种能自愈的成因，各给一次机会，所以最多三轮。
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const request = BILI_AI_PROVIDER.buildChatRequest({
       settings,
-      messages,
+      messages: providerMessages,
       maxTokens: tokens,
       temperature,
       responseFormat: format,
@@ -1032,7 +1037,7 @@ async function sendAiRequestStream(settings, request, onDelta, signal) {
 /** 流式版单 Provider 请求：buildChatRequest(stream) → sendAiRequestStream。 */
 async function requestProviderCompletionStream(
   settings,
-  { messages, maxTokens, temperature, onDelta, signal },
+  { messages, images, maxTokens, temperature, onDelta, signal },
 ) {
   const check = BILI_SETTINGS.validate(settings);
   if (!check.ok) {
@@ -1042,9 +1047,12 @@ async function requestProviderCompletionStream(
   }
   await ensureHostPermission(settings.aiBaseUrl);
 
+  const providerMessages = settings.supportsVision
+    ? BILI_AI_PROVIDER.attachImagesToLastUserMessage(settings.protocol, messages, images)
+    : messages;
   const request = BILI_AI_PROVIDER.buildChatRequest({
     settings,
-    messages,
+    messages: providerMessages,
     maxTokens,
     temperature,
     stream: true,
@@ -1058,7 +1066,7 @@ async function requestProviderCompletionStream(
  * 一旦某家已经吐过内容，失败就立即终止——两家服务拼出来的回答只会更乱，
  * 不执行 failover；只有一家都没吐过内容时，可恢复错误才轮到下一家。
  */
-async function streamAiCompletion({ messages, maxTokens, temperature, onDelta, signal }) {
+async function streamAiCompletion({ messages, images = [], maxTokens, temperature, onDelta, signal }) {
   const appSettings = await getSettings();
   const check = BILI_SETTINGS.validateAppSettings(appSettings);
   if (!check.ok) {
@@ -1082,6 +1090,7 @@ async function streamAiCompletion({ messages, maxTokens, temperature, onDelta, s
     try {
       await requestProviderCompletionStream(provider.settings, {
         messages,
+        images,
         maxTokens,
         temperature,
         onDelta: (text) => {
@@ -1648,12 +1657,14 @@ function analysisAsChatContext(analysis) {
 function normalizeChatContextSelection(selection) {
   // 兼容已有侧边栏：它们尚未发送该字段时，沿用原来的「全关联」行为。
   if (!selection || typeof selection !== "object") {
-    return { transcript: true, overview: true, notes: true };
+    return { transcript: true, overview: true, notes: true, memos: true, aiRecords: true };
   }
   return {
     transcript: selection.transcript === true,
     overview: selection.overview === true,
     notes: selection.notes === true,
+    memos: selection.memos === true,
+    aiRecords: selection.aiRecords === true,
   };
 }
 
@@ -1663,6 +1674,7 @@ function notesAsChatContext(notes, resource) {
     (note) =>
       (note.site || "bilibili") === resource.site &&
       note.bvid === resource.videoId &&
+      note.kind === "ai_video_note" &&
       typeof note.text === "string" &&
       note.text.trim(),
   );
@@ -1674,7 +1686,58 @@ function notesAsChatContext(notes, resource) {
     })
     .join("\n\n")
     .slice(0, 8_000);
-  return content || "（当前视频没有已保存笔记）";
+  return content || "（当前视频还没有生成 AI 笔记）";
+}
+
+function memosAsChatContext(notes, resource) {
+  if (!resource) return { text: "（当前没有关联视频，未附加手记）", images: [] };
+  const matching = notes.filter(
+    (note) =>
+      (note.site || "bilibili") === resource.site &&
+      note.bvid === resource.videoId &&
+      note.kind === "memo",
+  );
+  const text = matching
+    .slice(0, 30)
+    .map((memo) => {
+      const timestamp = memo.timestamp ? `[${memo.timestamp}] ` : "";
+      const body = typeof memo.text === "string" && memo.text.trim()
+        ? memo.text.trim().slice(0, 1_500)
+        : "（仅包含图片）";
+      return `${timestamp}${body}`;
+    })
+    .join("\n\n")
+    .slice(0, 10_000) || "（当前视频没有手记）";
+
+  // 单张手记图已在保存时限制为 512 KB；问答再加总量保护，避免请求体膨胀。
+  const images = [];
+  let totalLength = 0;
+  for (const memo of matching) {
+    const image = typeof memo.imageDataUrl === "string" ? memo.imageDataUrl : "";
+    if (!/^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(image)) continue;
+    if (images.length >= 6 || totalLength + image.length > 2_000_000) break;
+    images.push(image);
+    totalLength += image.length;
+  }
+  return { text, images };
+}
+
+function aiRecordsAsChatContext(notes, resource) {
+  if (!resource) return "（当前没有关联视频，未附加 AI 记）";
+  const content = notes
+    .filter(
+      (note) =>
+        (note.site || "bilibili") === resource.site &&
+        note.bvid === resource.videoId &&
+        (note.kind === "ai_note" || note.kind === "ai_chat") &&
+        typeof note.text === "string" &&
+        note.text.trim(),
+    )
+    .slice(0, 20)
+    .map((note) => note.text.trim().slice(0, 2_000))
+    .join("\n\n")
+    .slice(0, 8_000);
+  return content || "（当前视频还没有 AI 记）";
 }
 
 /**
@@ -1698,12 +1761,23 @@ async function assembleAskContext({
   if (!userQuestion) {
     return { resource, userQuestion, error: { success: false, error: "EMPTY_QUESTION", message: "请先输入问题。" } };
   }
+  if (!resource) {
+    return {
+      resource,
+      userQuestion,
+      error: {
+        success: false,
+        error: "NO_VIDEO_CONTEXT",
+        message: "请先打开一个支持的视频，再使用问 AI。",
+      },
+    };
+  }
   // 回答语言跟随界面语言（与概览/笔记一致），不跟随提问语言：
   // 用户把界面切成英文后，中文提问也应得到英文回答。
   const askLanguage = (await getSettings()).uiLanguage === "en" ? "en" : "zh-CN";
 
-  // 问答不依赖字幕管线。能取到字幕就把它作为额外上下文；取不到、视频没有
-  // 字幕，甚至当前没有关联视频时，都仍然按普通 AI 对话继续。
+  // 问答不依赖字幕管线。能取到字幕就把它作为额外上下文；取不到或视频没有
+  // 字幕时，仍可结合当前视频的元数据、AI 笔记与手记回答，但不扩展为通用问答。
   let transcript = null;
   let videoInfo =
     providedVideoInfo && typeof providedVideoInfo === "object"
@@ -1731,13 +1805,27 @@ async function assembleAskContext({
     }
   }
 
-  let notesContext = "（用户未选择关联笔记）";
-  if (selectedContext.notes) {
+  let notesContext = "（用户未选择关联 AI 笔记）";
+  let memosContext = "（用户未选择关联手记）";
+  let aiRecordsContext = "（用户未选择关联 AI 记）";
+  let memoImages = [];
+  if (selectedContext.notes || selectedContext.memos || selectedContext.aiRecords) {
     try {
-      notesContext = notesAsChatContext(await readNotes(), resource);
+      const savedNotes = await readNotes();
+      if (selectedContext.notes) notesContext = notesAsChatContext(savedNotes, resource);
+      if (selectedContext.memos) {
+        const memoContext = memosAsChatContext(savedNotes, resource);
+        memosContext = memoContext.text;
+        memoImages = memoContext.images;
+      }
+      if (selectedContext.aiRecords) {
+        aiRecordsContext = aiRecordsAsChatContext(savedNotes, resource);
+      }
     } catch (error) {
-      debugLog("[Video Assistant] 问答未读到笔记，将跳过笔记上下文：", error);
-      notesContext = "（没有可用的已保存笔记）";
+      debugLog("[Video Assistant] 问答未读到笔记或手记，将跳过：", error);
+      if (selectedContext.notes) notesContext = "（没有可用的 AI 笔记）";
+      if (selectedContext.memos) memosContext = "（没有可用的手记）";
+      if (selectedContext.aiRecords) aiRecordsContext = "（没有可用的 AI 记）";
     }
   }
 
@@ -1761,9 +1849,11 @@ async function assembleAskContext({
     transcriptContext: selectedContext.transcript && transcript?.segments?.length
       ? BILI_AI.buildChatTranscriptContext(transcript.segments, userQuestion)
       : selectedContext.transcript
-        ? "（当前没有可用的视频字幕；可以正常回答一般问题，但不要假装了解未提供的视频内容。）"
+        ? "（当前没有可用的视频字幕；只能依据当前视频的其它已提供资料回答。）"
         : "（用户未选择关联字幕）",
     notesContext,
+    memosContext,
+    aiRecordsContext,
     question: userQuestion,
   };
   const [systemPrompt, userPrompt] = await Promise.all([
@@ -1771,7 +1861,7 @@ async function assembleAskContext({
     loadPromptSection("ask.md", "用户提示词", variables),
   ]);
   const safeHistory = BILI_AI.normalizeChatHistory(history);
-  return { resource, userQuestion, systemPrompt, userPrompt, safeHistory };
+  return { resource, userQuestion, systemPrompt, userPrompt, safeHistory, memoImages };
 }
 
 async function handleAskVideo({
@@ -1798,6 +1888,7 @@ async function handleAskVideo({
 
   try {
     const { text, providerRole } = await requestAiCompletion({
+      images: assembled.memoImages,
       maxTokens: 2_048,
       temperature: 0.3,
       messages: [
@@ -1840,6 +1931,7 @@ async function handleAskVideoStream(port, message, signal) {
   let emitted = false;
   try {
     await streamAiCompletion({
+      images: assembled.memoImages,
       maxTokens: 2_048,
       temperature: 0.3,
       messages: [

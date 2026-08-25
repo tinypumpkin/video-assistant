@@ -202,6 +202,13 @@ test("已拉取的模型列表会去重、清理并随 Provider 配置保留", (
   ]);
 });
 
+test("视觉能力仅接受设置页实测写入的布尔 true", () => {
+  assert.equal(settings.normalize({ supportsVision: true }).supportsVision, true);
+  for (const value of [false, undefined, "true", 1]) {
+    assert.equal(settings.normalize({ supportsVision: value }).supportsVision, false);
+  }
+});
+
 test("Anthropic 兼容代理：剥掉 /v1 再拼回去，最终端点不变", () => {
   // 存的是剥掉 /v1 的形式，但用户填的和最终请求的地址是一致的，
   // 所以这个规整对用户不可见——除非它把两头搞反，那就会拼出 /v1/v1/messages。

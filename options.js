@@ -84,6 +84,8 @@ const EN_TEXT = Object.freeze({
   "模型列表已更新": "Model list updated",
   "配置不完整": "Incomplete",
   "正在测试…": "Testing…",
+  "测试成功": "Test successful",
+  "测试成功：支持视觉输入": "Test successful: vision input supported",
   "连接正常": "Healthy",
   "连接失败": "Failed",
   "需要授权才能访问该地址。": "Host permission is required for this address.",
@@ -349,6 +351,7 @@ function readProvider(card, presetId = card.preset.value) {
     aiApiKey: apiKeyValue(card.apiKey),
     aiModel: card.model.value,
     availableModels: modelOptionValues(card),
+    supportsVision: card.supportsVision === true,
   });
 }
 
@@ -359,6 +362,7 @@ function writeProvider(card, provider) {
   card.baseUrl.value = settings.aiBaseUrl;
   setApiKeyValue(card.apiKey, settings.aiApiKey);
   card.model.value = settings.aiModel;
+  card.supportsVision = settings.supportsVision;
   syncPresetFields(card);
   card.baseUrl.value = settings.aiBaseUrl;
   setModelOptions(card, settings.availableModels, {
@@ -546,8 +550,14 @@ function createAiProviderCard(provider, index, total) {
   card.presetStates.set(provider.presetId, BILI_SETTINGS.normalize(provider));
   writeProvider(card, provider);
   preset.addEventListener("change", () => restoreProviderPreset(card));
-  protocol.addEventListener("change", () => updateEndpoint(card));
+  protocol.addEventListener("change", () => {
+    card.supportsVision = false;
+    updateEndpoint(card);
+  });
+  baseUrl.addEventListener("input", () => { card.supportsVision = false; });
+  apiKey.addEventListener("input", () => { card.supportsVision = false; });
   model.addEventListener("input", () => {
+    card.supportsVision = false;
     modelOptions.value = modelOptionValues(card).includes(model.value.trim())
       ? model.value.trim()
       : "";
@@ -555,6 +565,7 @@ function createAiProviderCard(provider, index, total) {
   modelOptions.addEventListener("change", () => {
     if (!modelOptions.value) return;
     model.value = modelOptions.value;
+    card.supportsVision = false;
     setHealth(card, "未测试", "");
   });
   modelsButton.addEventListener("click", () => fetchModels(card));
@@ -813,23 +824,59 @@ async function testProvider(card) {
       throw new Error("需要授权才能访问该地址。");
     }
     showStatus(card.status, "正在测试…", { sticky: true });
-    const request = BILI_AI_PROVIDER.buildChatRequest({
-      settings: provider,
-      messages: [{ role: "user", content: "回复两个字：可用" }],
-      maxTokens: 32,
-    });
-    const response = await fetch(request.url, {
-      method: "POST",
-      headers: request.headers,
-      body: JSON.stringify(request.body),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(BILI_AI_PROVIDER.parseErrorMessage(data, response.status));
+    const requestOnce = async (messages) => {
+      const request = BILI_AI_PROVIDER.buildChatRequest({
+        settings: provider,
+        messages,
+        maxTokens: 32,
+      });
+      const response = await fetch(request.url, {
+        method: "POST",
+        headers: request.headers,
+        body: JSON.stringify(request.body),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(BILI_AI_PROVIDER.parseErrorMessage(data, response.status));
+      }
+      return BILI_AI_PROVIDER.parseChatResponse(provider.protocol, data).trim();
+    };
+
+    // 图片里只写一个随机性低的短码，必须真正读取图片才能答对。视觉请求
+    // 被拒或答错时，再发纯文本请求；后者成功仍表示 Provider 可用于本扩展。
+    const canvas = document.createElement("canvas");
+    canvas.width = 180;
+    canvas.height = 80;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#111827";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#ffffff";
+    context.font = "bold 48px sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText("VA7", canvas.width / 2, canvas.height / 2);
+    const probeImage = canvas.toDataURL("image/png");
+    const probeMessages = BILI_AI_PROVIDER.attachImagesToLastUserMessage(
+      provider.protocol,
+      [{ role: "user", content: "Read the exact three-character code in the image. Reply with only that code." }],
+      [probeImage],
+    );
+
+    let supportsVision = false;
+    try {
+      const visionText = await requestOnce(probeMessages);
+      supportsVision = /VA\s*7/i.test(visionText);
+    } catch {
+      // 不支持视觉输入不是连接失败，继续做纯文本连通性测试。
     }
-    const text = BILI_AI_PROVIDER.parseChatResponse(provider.protocol, data).trim();
+    if (!supportsVision) {
+      await requestOnce([{ role: "user", content: "回复两个字：可用" }]);
+    }
+    card.supportsVision = supportsVision;
     setHealth(card, "连接正常", "ok");
-    showStatus(card.status, text ? `模型回复：${text.slice(0, 30)}` : "连接正常");
+    showStatus(card.status, supportsVision ? "测试成功：支持视觉输入" : "测试成功", {
+      sticky: true,
+    });
   } catch (error) {
     setHealth(card, "连接失败", "error");
     showStatus(card.status, `测试失败：${error.message}`, {

@@ -137,11 +137,12 @@ function createContext({
   }
   // 流式「问 AI」用 Port 长连接；测试里通过 conn.port._emit() 模拟后台推消息。
   const ports = [];
-  // 真实页面中的三个复选框在 HTML 里默认全选；桩没有解析 HTML，显式补上。
+  // 真实页面中的四个复选框在 HTML 里默认全选；桩没有解析 HTML，显式补上。
   for (const id of [
     "chatContextTranscript",
     "chatContextOverview",
     "chatContextNotes",
+    "chatContextMemos",
   ]) {
     byId(id).checked = true;
   }
@@ -1153,6 +1154,8 @@ test("问 AI 支持连续追问并把历史发送给后台", async () => {
 
 test("空流式回答显示本地化的紧凑思考指示器", async () => {
   const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.site = "bilibili";
+  ctx.state.bvid = "BV1xx411c7mD";
   await ctx.submitChatQuestion("请先思考");
 
   const bubble = ctx.el("chatMessages").children.at(-1);
@@ -1203,31 +1206,36 @@ test("打字机直接锚定流式文本节点，增量到达时即渲染 Markdow
   assert.ok(!final.streaming, "streaming 标志已清除");
 });
 
-test("问 AI 默认关联三类上下文，全部关闭时明确发送纯问答选择", async () => {
+test("问 AI 默认关联当前视频的四类上下文", async () => {
   const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.site = "bilibili";
+  ctx.state.bvid = "BV1xx411c7mD";
   await ctx.submitChatQuestion("默认上下文");
   const [defaultAsk] = ctx.ports.at(-1).sent;
   assert.deepEqual(JSON.parse(JSON.stringify(defaultAsk.contextSelection)), {
     transcript: true,
     overview: true,
     notes: true,
+    memos: true,
   });
   streamAnswer(ctx.ports.at(-1), "好的");
 
   ctx.el("chatContextTranscript").checked = false;
   ctx.el("chatContextOverview").checked = false;
   ctx.el("chatContextNotes").checked = false;
+  ctx.el("chatContextMemos").checked = false;
   await ctx.submitChatQuestion("纯问答");
   const asks = ctx.ports.map((entry) => entry.sent[0]);
   assert.deepEqual(JSON.parse(JSON.stringify(asks.at(-1).contextSelection)), {
     transcript: false,
     overview: false,
     notes: false,
+    memos: false,
   });
   streamAnswer(ctx.ports.at(-1), "好的");
 });
 
-test("没有字幕或视频上下文时问 AI 仍可自由对话", async () => {
+test("没有当前视频时问 AI 会在侧栏直接拦截", async () => {
   const ctx = createContext({
     transcript: { success: false, error: "NO_SUBTITLE", message: "没有字幕" },
     tabsQuery: async () => [{ id: 2, windowId: 1, url: "https://example.com/" }],
@@ -1240,11 +1248,9 @@ test("没有字幕或视频上下文时问 AI 仍可自由对话", async () => {
   assert.equal(ctx.el("idleState").hidden, true);
 
   await ctx.submitChatQuestion("请介绍一下你自己");
-  const ask = ctx.ports.at(-1).sent[0];
-  assert.ok(ask);
-  assert.equal(ask.bvid, null);
-  streamAnswer(ctx.ports.at(-1), "回答：请介绍一下你自己");
-  assert.equal(ctx.state.chatMessages.at(-1).content, "回答：请介绍一下你自己");
+  assert.equal(ctx.ports.length, 0);
+  assert.equal(ctx.state.chatMessages.at(-1).error, true);
+  assert.match(ctx.state.chatMessages.at(-1).content, /支持的视频/);
 });
 
 test("流式增量逐块累积，期间处于 streaming 占位状态", async () => {

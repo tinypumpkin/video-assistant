@@ -455,6 +455,9 @@ var BILI_SETTINGS = (() => {
       aiApiKey: typeof source.aiApiKey === "string" ? source.aiApiKey.trim() : "",
       aiBaseUrl: checked.ok ? checked.url : rawBaseUrl,
       aiModel: rawModel.slice(0, 200),
+      // 仅在设置页实际用图片探测成功后开启。未测试和明确不支持都按 false
+      // 处理，避免把 Base64 图片误发给纯文本模型导致整次问答失败。
+      supportsVision: source.supportsVision === true,
       // 模型列表来自用户主动拉取，只保存在本机，供设置页下次打开时继续选择。
       availableModels: normalizeAvailableModels(source.availableModels),
       aiConcurrency: clampNumber(source.aiConcurrency, LIMITS.concurrency),

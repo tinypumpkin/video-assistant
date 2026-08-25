@@ -66,6 +66,43 @@ test("OpenAI 协议：JSON 模式与温度按需附加", () => {
   assert.equal("temperature" in without.body, false);
 });
 
+test("视觉图片按 OpenAI 与 Anthropic 各自协议附加到最后一条用户消息", () => {
+  const image = "data:image/png;base64,QUJDRA==";
+  const messages = [
+    { role: "system", content: "规则" },
+    { role: "user", content: "上一问" },
+    { role: "assistant", content: "上一答" },
+    { role: "user", content: "看手记图" },
+  ];
+  const openai = provider.attachImagesToLastUserMessage(PROTOCOLS.OPENAI, messages, [image]);
+  assert.deepEqual(openai.at(-1).content, [
+    { type: "text", text: "看手记图" },
+    { type: "image_url", image_url: { url: image } },
+  ]);
+  const anthropic = provider.attachImagesToLastUserMessage(PROTOCOLS.ANTHROPIC, messages, [image]);
+  assert.deepEqual(anthropic.at(-1).content, [
+    { type: "text", text: "看手记图" },
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJDRA==" } },
+  ]);
+  assert.equal(messages.at(-1).content, "看手记图", "不得修改多轮历史原对象");
+});
+
+test("视觉附件忽略非法数据和没有用户消息的输入", () => {
+  const source = [{ role: "user", content: "纯文本" }];
+  assert.deepEqual(
+    provider.attachImagesToLastUserMessage(PROTOCOLS.OPENAI, source, ["https://example.com/a.png"]),
+    source,
+  );
+  assert.deepEqual(
+    provider.attachImagesToLastUserMessage(
+      PROTOCOLS.OPENAI,
+      [{ role: "system", content: "x" }],
+      ["data:image/png;base64,QQ=="],
+    ),
+    [{ role: "system", content: "x" }],
+  );
+});
+
 test("OpenAI 协议：从 choices 里取文本", () => {
   assert.equal(
     provider.parseChatResponse(PROTOCOLS.OPENAI, {

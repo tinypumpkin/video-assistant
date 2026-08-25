@@ -436,29 +436,46 @@ test("AI 服务支持有序多项、拖动排序与局部密钥掩码", () => {
   assert.match(background, /尝试下一项 AI 服务/);
 });
 
-test("问 AI 不以字幕成功为前置条件", () => {
+test("问 AI 需要当前视频，但不以字幕成功为前置条件", () => {
   const sidepanel = readText("sidepanel.js");
   const background = readText("background.js");
   const prompt = readText("prompts/ask.md");
-  assert.doesNotMatch(sidepanel, /state\.view\s*!==\s*"ready"\s*\|\|\s*!state\.bvid/);
+  assert.match(sidepanel, /!state\.site \|\| !state\.bvid/);
   assert.match(background, /只读已经取得的缓存/);
-  assert.match(prompt, /没有视频上下文时也要正常回答/);
+  assert.match(prompt, /回答范围仅限当前视频/);
 });
 
-test("问 AI 可按需关联字幕、概览和笔记，所有笔记都支持再次编辑", () => {
+test("问 AI 可按需关联当前视频字幕、概览、AI 笔记和手记", () => {
   const html = readText("sidepanel.html");
   const sidepanel = readText("sidepanel.js");
   const background = readText("background.js");
   assert.match(html, /id="chatContextTranscript"[^>]*checked/);
   assert.match(html, /id="chatContextOverview"[^>]*checked/);
   assert.match(html, /id="chatContextNotes"[^>]*checked/);
+  assert.match(html, /id="chatContextMemos"[^>]*checked/);
   assert.match(sidepanel, /function chatContextSelection\(/);
   assert.match(sidepanel, /contextSelection:\s*chatContextSelection\(\)/);
   assert.match(background, /function normalizeChatContextSelection\(/);
   assert.match(background, /function notesAsChatContext\(/);
+  assert.match(background, /note\.kind === "ai_video_note"/);
+  assert.match(background, /function memosAsChatContext\(/);
+  assert.match(background, /note\.kind === "memo"/);
+  assert.match(background, /memoImages/);
   assert.match(background, /function handleUpdateNote\(/);
   assert.match(sidepanel, /function beginNoteEdit\(/);
   assert.match(sidepanel, /action:\s*"updateNote"/);
+});
+
+test("AI 服务测试探测视觉输入并保存能力，问答按 Provider 能力附加手记图片", () => {
+  const options = readText("options.js");
+  const settings = readText("settings.js");
+  const provider = readText("lib/ai-provider.js");
+  const background = readText("background.js");
+  assert.match(options, /测试成功：支持视觉输入/);
+  assert.match(options, /card\.supportsVision = supportsVision/);
+  assert.match(settings, /supportsVision: source\.supportsVision === true/);
+  assert.match(provider, /function attachImagesToLastUserMessage/);
+  assert.match(background, /settings\.supportsVision[\s\S]{0,160}attachImagesToLastUserMessage/);
 });
 
 test("笔记栏目复用安全 Markdown 渲染器", () => {

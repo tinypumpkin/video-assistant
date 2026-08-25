@@ -375,20 +375,22 @@
     <!-- 视频上下文多轮问答 -->
     <section id="chatPanel" hidden>
       <div class="panel-toolbar chat-toolbar">
-        <span class="muted">有视频上下文时优先结合，也支持普通问答</span>
+        <span class="muted">仅结合当前视频上下文回答</span>
         <details class="chat-context-menu">
           <summary id="chatContextSummary">关联上下文</summary>
           <div class="chat-context-options">
             <label><input id="chatContextTranscript" type="checkbox" checked />关联字幕</label>
             <label><input id="chatContextOverview" type="checkbox" checked />关联概述</label>
-            <label><input id="chatContextNotes" type="checkbox" checked />关联 Note</label>
+            <label><input id="chatContextNotes" type="checkbox" checked />关联 AI 笔记</label>
+            <label><input id="chatContextMemos" type="checkbox" checked />关联手记</label>
+            <label><input id="chatContextAiRecords" type="checkbox" checked />关联 AI 记</label>
           </div>
         </details>
         <button id="clearChatBtn" class="ghost-btn" type="button">清空对话</button>
       </div>
       <div id="chatEmpty" class="chat-empty">
         <p class="state-title">想问 AI 什么？</p>
-        <p class="state-text">有字幕或概览时会自动结合视频；没有上下文也可以自由问答。</p>
+        <p class="state-text">选择字幕、概述、AI 笔记、手记或 AI 记作为当前视频的上下文。</p>
       </div>
       <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
       <form id="chatForm" class="chat-composer chat-sticky">

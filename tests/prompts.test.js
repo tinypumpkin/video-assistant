@@ -70,6 +70,7 @@ const PROMPTS = {
     overviewText: "[0:00] 测试概览",
     transcriptContext: "[0:00] 测试字幕",
     notesContext: "[0:00] 测试笔记",
+    memosContext: "[0:05] 测试手记",
     question: "视频讲了什么？",
     outputLanguage: "简体中文",
   },

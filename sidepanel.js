@@ -88,18 +88,21 @@ const SIDE_PANEL_EN = Object.freeze({
   "还没有 AI 记": "No AI notes yet",
   "在“问 AI”中可将任意回答保存到这里。":
     "Save any answer from Ask AI here.",
-  "有视频上下文时优先结合，也支持普通问答":
-    "Uses video context when available and also supports general questions",
+  "仅结合当前视频上下文回答": "Answers using the current video context only",
   "关联上下文": "Use context",
   "关联字幕": "Use transcript",
   "关联概述": "Use overview",
-  "关联 Note": "Use notes",
+  "关联 AI 笔记": "Use AI notes",
+  "关联手记": "Use memos",
+  "关联 AI 记": "Use saved AI answers",
   "清空对话": "Clear chat",
   "Enter 发送 · Shift+Enter 换行": "Enter to send · Shift+Enter for a new line",
   "发送": "Send",
   "想问 AI 什么？": "What would you like to ask?",
-  "有字幕或概览时会自动结合视频；没有上下文也可以自由问答。":
-    "Video captions and the overview are used when available; you can also ask without context.",
+  "选择字幕、概述、AI 笔记、手记或 AI 记作为当前视频的上下文。":
+    "Choose the transcript, overview, AI notes, memos, or saved AI answers as context for the current video.",
+  "请先打开一个支持的视频，再使用问 AI。":
+    "Open a supported video before using Ask AI.",
   "解释": "Explain",
   "输入问题…": "Type a question…",
   "向 AI 提问": "Ask AI",
@@ -1169,6 +1172,8 @@ function chatContextSelection() {
     transcript: Boolean(el("chatContextTranscript").checked),
     overview: Boolean(el("chatContextOverview").checked),
     notes: Boolean(el("chatContextNotes").checked),
+    memos: Boolean(el("chatContextMemos").checked),
+    aiRecords: Boolean(el("chatContextAiRecords").checked),
   };
 }
 
@@ -1367,6 +1372,16 @@ async function submitChatQuestion(questionInput) {
   const input = el("chatInput");
   const question = String(questionInput ?? input.value).trim().slice(0, 2_000);
   if (!question) {
+    input.focus();
+    return;
+  }
+  if (!state.site || !state.bvid) {
+    state.chatMessages.push({
+      role: "assistant",
+      content: uiText("请先打开一个支持的视频，再使用问 AI。"),
+      error: true,
+    });
+    renderChat();
     input.focus();
     return;
   }
