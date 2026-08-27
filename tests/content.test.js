@@ -572,8 +572,9 @@ test("点手记按钮发 saveMemo：带时间戳，截图失败不挡保存", as
   assert.ok(save, "快捷键手记走 saveMemo 而不是 saveNote");
   assert.equal(save.kind, "memo");
   assert.equal(save.timestamp, 323);
-  // mock 环境没有 canvas，截图返回 null —— 手记仍应保存。
-  assert.equal(save.imageDataUrl, null);
+  // mock 环境没有 canvas，截图返回 null —— 手记仍应保存，且带文字兜底而不是裸 null 图。
+  assert.equal(save.imageDataUrl, undefined);
+  assert.match(save.text, /视频截图失败/);
   const legacy = sent.find((message) => message.action === "saveNote");
   assert.equal(legacy, undefined, "不再走旧的 saveNote 链路");
 });

@@ -276,6 +276,9 @@
     // 连点几下不该存出几条一样的手记，在途时忽略而不是排队。
     noteInFlight = true;
     flashNoteButton(UI.uiCopy("saving"));
+    // 截图可能因新播放器还没解码出帧 / canvas 被跨源污染而失败（SPA 切视频后
+    // 的典型时间窗）。此时至少把手记时间点以文字落库，别让 N 键白按。
+    const shot = captureVideoFrame(video);
     try {
       const result = await chrome.runtime.sendMessage({
         action: "saveMemo",
@@ -284,10 +287,19 @@
         bvid,
         page: currentPage(),
         timestamp: Math.floor(video.currentTime || 0),
-        imageDataUrl: captureVideoFrame(video),
+        ...(shot
+          ? { imageDataUrl: shot }
+          : { text: `（视频截图失败，记录于 ${Math.floor(video.currentTime || 0)}s）` }),
       });
-      flashNoteButton(result?.success ? UI.uiCopy("saved") : UI.uiCopy("saveFailed"));
+      if (result?.success) {
+        flashNoteButton(UI.uiCopy("saved"));
+      } else {
+        // 与 YouTube 侧对齐：失败必须留下具体原因，否则永远只能看到笼统的「保存失败」。
+        console.error("[Video Assistant] B站手记保存失败：", result?.error, result?.message);
+        flashNoteButton(UI.uiCopy("saveFailed"));
+      }
     } catch (error) {
+      console.error("[Video Assistant] B站手记保存异常：", error?.message || error);
       flashNoteButton(UI.uiCopy("saveFailed"));
     } finally {
       noteInFlight = false;
