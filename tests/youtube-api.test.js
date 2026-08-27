@@ -37,6 +37,208 @@ test("Supadata 内容归一化为通用秒级字幕并清理说话人标记", ()
   assert.deepEqual(result.availableLanguages, ["en", "zh"]);
 });
 
+test("本地字幕轨只接受 YouTube timedtext，并按语言偏好选择", () => {
+  const tracks = [
+    {
+      baseUrl: "https://www.youtube.com/api/timedtext?v=abc&lang=en",
+      languageCode: "en",
+      name: "English",
+      kind: "asr",
+    },
+    {
+      baseUrl: "https://www.youtube.com/api/timedtext?v=abc&lang=zh-Hans",
+      languageCode: "zh-Hans",
+      name: "中文（简体）",
+    },
+    {
+      baseUrl: "https://attacker.example/api/timedtext?v=abc",
+      languageCode: "zh",
+    },
+  ];
+  const normalized = youtube.normalizeLocalTracks(tracks);
+  assert.equal(normalized.length, 2);
+  assert.equal(
+    youtube.pickLocalCaptionTrack(normalized, ["zh-CN", "en"]).languageCode,
+    "zh-Hans",
+  );
+});
+
+test("YouTube JSON3 字幕转为秒级分段并解码实体", () => {
+  const result = youtube.normalizeJson3Transcript({
+    events: [
+      {
+        tStartMs: 1250,
+        dDurationMs: 2500,
+        segs: [{ utf8: "Hello " }, { utf8: "&amp; world\n" }],
+      },
+      { tStartMs: 5000, dDurationMs: 1000 },
+    ],
+  }, "en");
+  assert.deepEqual(result.transcript, [
+    { text: "Hello & world", start: 1.25, duration: 2.5, language: "en" },
+  ]);
+});
+
+test("YouTube timedtext XML 与 srv3 都能归一化", () => {
+  const legacy = youtube.normalizeTimedTextBody(
+    '<?xml version="1.0"?><transcript><text start="1.5" dur="2.25">A &amp; B</text></transcript>',
+    "en",
+  );
+  assert.deepEqual(legacy.transcript[0], {
+    text: "A & B",
+    start: 1.5,
+    duration: 2.25,
+    language: "en",
+  });
+  const srv3 = youtube.normalizeTimedTextBody(
+    '<timedtext format="3"><body><p t="2500" d="1000"><s>Hello</s> world</p></body></timedtext>',
+    "en",
+  );
+  assert.equal(srv3.transcript[0].text, "Hello world");
+  assert.equal(srv3.transcript[0].start, 2.5);
+});
+
+test("YouTube VTT 与 TTML 字幕都能归一化", () => {
+  const vtt = youtube.normalizeTimedTextBody(
+    "WEBVTT\n\n00:00:01.250 --> 00:00:03.500 align:start\nHello &amp; world",
+    "en",
+  );
+  assert.deepEqual(vtt.transcript[0], {
+    text: "Hello & world",
+    start: 1.25,
+    duration: 2.25,
+    language: "en",
+  });
+
+  const ttml = youtube.normalizeTimedTextBody(
+    '<tt><body><div><p begin="00:00:02.500" end="00:00:05.000"><span>TTML cue</span></p></div></body></tt>',
+    "en",
+  );
+  assert.deepEqual(ttml.transcript[0], {
+    text: "TTML cue",
+    start: 2.5,
+    duration: 2.5,
+    language: "en",
+  });
+});
+
+test("YouTube JSON3 兼容 XSSI 前缀、包装 events 与直接 text", () => {
+  const result = youtube.normalizeTimedTextBody(
+    `)]}'${JSON.stringify({ data: { events: [{ tStartMs: 500, dDurationMs: 1500, text: "Wrapped" }] } })}`,
+    "en",
+  );
+  assert.equal(result.transcript[0].text, "Wrapped");
+  assert.equal(result.transcript[0].start, 0.5);
+});
+
+test("本地字幕优先使用当前页面上下文返回的正文", async () => {
+  const result = await youtube.fetchLocalTranscript(
+    [{ baseUrl: "https://www.youtube.com/api/timedtext?v=abc&lang=en", languageCode: "en", name: "English" }],
+    ["en"],
+    {
+      localCaptionSource: {
+        body: '<transcript><text start="0" dur="1">From page</text></transcript>',
+      },
+      fetchImpl: async () => { throw new Error("后台不应再次请求 timedtext"); },
+    },
+  );
+  assert.equal(result.transcript[0].text, "From page");
+});
+
+test("本地字幕优先采用 YouTube 页面 get_transcript 返回的完整分段", async () => {
+  const result = await youtube.fetchLocalTranscript(
+    [{ baseUrl: "https://www.youtube.com/api/timedtext?v=abc&lang=en", languageCode: "en", name: "English" }],
+    ["en"],
+    {
+      localCaptionSource: {
+        transcript: [{ text: "From youtubei", start: 1.5, duration: 2, language: "en" }],
+        language: "en",
+        languageLabel: "English",
+        source: "youtubei-transcript",
+      },
+      fetchImpl: async () => { throw new Error("已有页面转录时不应再请求空 timedtext"); },
+    },
+  );
+  assert.deepEqual(result.transcript[0], {
+    text: "From youtubei",
+    start: 1.5,
+    duration: 2,
+    language: "en",
+  });
+  assert.equal(result.languageLabel, "English");
+});
+
+test("本地字幕请求强制 JSON3，并保留可选轨与 AI 字幕标志", async () => {
+  let requestedUrl;
+  let requestedOptions;
+  const result = await youtube.fetchLocalTranscript(
+    [
+      {
+        baseUrl: "https://www.youtube.com/api/timedtext?v=abc&lang=en&fmt=srv3",
+        languageCode: "en",
+        name: "English (auto-generated)",
+        kind: "asr",
+      },
+      {
+        baseUrl: "https://www.youtube.com/api/timedtext?v=abc&lang=zh",
+        languageCode: "zh",
+        name: "中文",
+      },
+    ],
+    ["en"],
+    {
+      fetchImpl: async (url, options) => {
+        requestedUrl = new URL(url);
+        requestedOptions = options;
+        return {
+          ok: true,
+          async json() {
+            return {
+              events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: "Local" }] }],
+            };
+          },
+        };
+      },
+    },
+  );
+  assert.equal(requestedUrl.searchParams.get("fmt"), "json3");
+  assert.deepEqual(requestedOptions, { credentials: "include" });
+  assert.equal(result.transcript[0].text, "Local");
+  assert.equal(result.languageLabel, "English (auto-generated)");
+  assert.equal(result.isAi, true);
+  assert.deepEqual(result.availableLanguages, ["en", "zh"]);
+});
+
+test("选中本地获取时只调用本地字幕", async () => {
+  const calls = [];
+  const result = await youtube.fetchTranscriptWithFallback(
+    "dQw4w9WgXcQ",
+    [
+      { providerId: "local", apiKey: "" },
+      { providerId: "supadata", apiKey: "paid-key" },
+    ],
+    {
+      localTracks: [{
+        baseUrl: "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en",
+        languageCode: "en",
+        name: "English",
+      }],
+      fetchImpl: async (url) => {
+        calls.push(url);
+        assert.match(url, /youtube\.com\/api\/timedtext/);
+        return {
+          ok: true,
+          async json() {
+            return { events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: "Local" }] }] };
+          },
+        };
+      },
+    },
+  );
+  assert.equal(result.providerId, "local");
+  assert.equal(calls.length, 1);
+});
+
 test("字幕请求强制 native 模式并只发送规范 URL", async () => {
   let requested;
   const fetchImpl = async (url, options) => {
@@ -134,39 +336,24 @@ test("TranscriptAPI 使用文档规定的 GET 端点与 Bearer 鉴权", async ()
   assert.equal(result.transcript[0].start, 3);
 });
 
-test("字幕服务商按保存顺序回退，成功后不会继续请求后续项", async () => {
+test("选择一个 API 服务商后不会自动调用列表中的其他服务商", async () => {
   const calls = [];
-  const result = await youtube.fetchTranscriptWithFallback(
-    "dQw4w9WgXcQ",
-    [
-      { providerId: "supadata", apiKey: "first" },
-      { providerId: "captapi", apiKey: "second" },
-      { providerId: "transcriptapi", apiKey: "third" },
-    ],
-    {
-      fetchImpl: async (url) => {
-        calls.push(url);
-        if (url.startsWith(youtube.TRANSCRIPT_URL)) {
+  await assert.rejects(
+    youtube.fetchTranscriptWithFallback(
+      "dQw4w9WgXcQ",
+      [
+        { providerId: "supadata", apiKey: "first" },
+        { providerId: "captapi", apiKey: "second" },
+      ],
+      {
+        fetchImpl: async (url) => {
+          calls.push(url);
           return { ok: false, status: 429, async json() { return {}; } };
-        }
-        if (url.startsWith(youtube.CAPTAPI_TRANSCRIPT_URL)) {
-          return {
-            ok: true,
-            status: 200,
-            async json() {
-              return {
-                success: true,
-                data: { language: "en", transcriptSegments: [{ text: "Fallback", start: 0, duration: 1 }] },
-              };
-            },
-          };
-        }
-        throw new Error("后续服务商不应被请求");
+        },
       },
-    },
+    ),
+    /限流/,
   );
-  assert.equal(result.providerId, "captapi");
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);
   assert.ok(calls[0].startsWith(youtube.TRANSCRIPT_URL));
-  assert.ok(calls[1].startsWith(youtube.CAPTAPI_TRANSCRIPT_URL));
 });

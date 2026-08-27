@@ -198,6 +198,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false; // Synchronous response
   }
 
+  if (message.action === "getYouTubeCaptionTracks") {
+    getLocalYouTubeCaptionTracks(message.videoId)
+      .then((tracks) => sendResponse({ success: true, tracks }))
+      .catch((error) => sendResponse({
+        success: false,
+        error: error?.message || "无法从当前 YouTube 页面读取字幕轨。",
+      }));
+    return true;
+  }
+
   if (message.action === "highlightMoments") {
     // Key moment markers disabled — chapters are shown in the side panel only.
     sendResponse({ success: true });
@@ -816,6 +826,70 @@ function extractVideoInfo() {
     currentTime: videoElement?.currentTime || 0,
     description: descriptionElement?.textContent?.trim() || "",
   };
+}
+
+// 从 watch 页 HTML 的脚本中取 ytInitialPlayerResponse。不能直接读取页面全局变量：
+// MV3 content script 运行在 isolated world；重新请求当前同源页面既能带登录态，也不
+// 需要向扩展申请额外主机权限。
+function extractInitialPlayerResponse(html) {
+  const source = String(html || "");
+  const marker = /ytInitialPlayerResponse\s*=\s*/g;
+  const hit = marker.exec(source);
+  if (!hit) throw new Error("当前页面没有公开播放器字幕信息。");
+  const start = source.indexOf("{", hit.index + hit[0].length);
+  if (start < 0) throw new Error("播放器字幕信息格式无效。");
+
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = start; index < source.length; index += 1) {
+    const char = source[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
+    }
+    if (char === '"') quoted = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return JSON.parse(source.slice(start, index + 1));
+    }
+  }
+  throw new Error("播放器字幕信息不完整。");
+}
+
+function publicCaptionTracks(playerResponse, expectedVideoId) {
+  if (playerResponse?.videoDetails?.videoId !== expectedVideoId) {
+    throw new Error("YouTube 返回了另一个视频的播放器信息。");
+  }
+  const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+  return (Array.isArray(tracks) ? tracks : []).map((track) => ({
+    baseUrl: String(track?.baseUrl || ""),
+    languageCode: String(track?.languageCode || ""),
+    name: String(track?.name?.simpleText || track?.name?.runs?.map((run) => run?.text || "").join("") || ""),
+    kind: track?.kind === "asr" ? "asr" : "",
+    isTranslatable: track?.isTranslatable === true,
+  })).filter((track) => track.baseUrl && track.languageCode);
+}
+
+async function getLocalYouTubeCaptionTracks(videoIdInput) {
+  const videoId = String(videoIdInput || "").trim();
+  const currentVideoId = new URLSearchParams(location.search).get("v") || "";
+  if (!videoId || videoId !== currentVideoId) {
+    throw new Error("当前标签页不是所请求的 YouTube 视频。");
+  }
+  const url = new URL("https://www.youtube.com/watch");
+  url.searchParams.set("v", videoId);
+  const response = await fetch(url.toString(), {
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`YouTube 页面请求失败：HTTP ${response.status}`);
+  const tracks = publicCaptionTracks(extractInitialPlayerResponse(await response.text()), videoId);
+  if (!tracks.length) throw new Error("该 YouTube 视频没有公开字幕轨。");
+  return tracks;
 }
 
 // ============================================================

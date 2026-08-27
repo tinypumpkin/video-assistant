@@ -137,12 +137,13 @@ function createContext({
   }
   // 流式「问 AI」用 Port 长连接；测试里通过 conn.port._emit() 模拟后台推消息。
   const ports = [];
-  // 真实页面中的四个复选框在 HTML 里默认全选；桩没有解析 HTML，显式补上。
+  // 真实页面中的五个复选框在 HTML 里默认全选；桩没有解析 HTML，显式补上。
   for (const id of [
     "chatContextTranscript",
     "chatContextOverview",
     "chatContextNotes",
     "chatContextMemos",
+    "chatContextAiRecords",
   ]) {
     byId(id).checked = true;
   }
@@ -1206,7 +1207,7 @@ test("打字机直接锚定流式文本节点，增量到达时即渲染 Markdow
   assert.ok(!final.streaming, "streaming 标志已清除");
 });
 
-test("问 AI 默认关联当前视频的四类上下文", async () => {
+test("问 AI 默认关联当前视频的五类上下文", async () => {
   const ctx = createContext({ transcript: transcriptResult() });
   ctx.state.site = "bilibili";
   ctx.state.bvid = "BV1xx411c7mD";
@@ -1217,6 +1218,7 @@ test("问 AI 默认关联当前视频的四类上下文", async () => {
     overview: true,
     notes: true,
     memos: true,
+    aiRecords: true,
   });
   streamAnswer(ctx.ports.at(-1), "好的");
 
@@ -1224,6 +1226,7 @@ test("问 AI 默认关联当前视频的四类上下文", async () => {
   ctx.el("chatContextOverview").checked = false;
   ctx.el("chatContextNotes").checked = false;
   ctx.el("chatContextMemos").checked = false;
+  ctx.el("chatContextAiRecords").checked = false;
   await ctx.submitChatQuestion("纯问答");
   const asks = ctx.ports.map((entry) => entry.sent[0]);
   assert.deepEqual(JSON.parse(JSON.stringify(asks.at(-1).contextSelection)), {
@@ -1231,6 +1234,7 @@ test("问 AI 默认关联当前视频的四类上下文", async () => {
     overview: false,
     notes: false,
     memos: false,
+    aiRecords: false,
   });
   streamAnswer(ctx.ports.at(-1), "好的");
 });

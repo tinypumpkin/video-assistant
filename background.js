@@ -94,24 +94,14 @@ async function broadcastSiteScope(settings) {
  *   - 关闭标签页 → 对应面板随之销毁
  *   - 每个标签页的面板是独立实例，state（生成笔记动画等）互不串台
  *
- * 打开一律走 action.onClicked + open({ tabId })：浏览器回调天然是用户手势，
- * 不依赖 openPanelOnActionClick 的宽松判定（Edge 比 Chrome 严），两边都稳。
- *
- * 手势铁律：sidePanel.open() 只能在用户手势的同步调用栈里调用——先 await
- * 别的 API 再 open，手势上下文就丢了（按钮点了没反应，只能提示去点工具栏
- * 图标）。所以 open() 永远是点击回调里的第一个动作；面板的 per-tab 启用/
- * 路径由 tabs.onUpdated 按 URL 提前配好，点击时无需再 setOptions。
+ * 工具栏图标交给 Chrome 官方的 openPanelOnActionClick 行为。此前手写
+ * action.onClicked + open({ tabId }) 会与异步 setOptions 形成竞态：新装/更新扩展
+ * 后，已打开的标签页还没写入 tab 级 path 就被 open，Chrome 会先打开一个没有
+ * 正确文档的全局空白侧栏。浏览器内建行为会读取当前 tab 已生效的配置再打开。
  */
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab?.id) return;
-  try {
-    // open() 必须在同步栈里发起（用户手势）。启用配置由 tabs.onUpdated
-    // 在页面加载时按 URL 设好（官方 per-tab 模式），这里不用再 setOptions。
-    await chrome.sidePanel.open({ tabId: tab.id });
-  } catch (error) {
-    console.warn("[Bilibili Digest] 打开侧边栏被拒绝：", error);
-  }
-});
+chrome.sidePanel
+  .setPanelBehavior({ openPanelOnActionClick: true })
+  .catch((error) => console.warn("[Video Assistant] 无法设置侧栏打开行为：", error));
 
 // 官方 per-tab 模式：按标签页 URL 设置 enabled，切到未启用的标签页时
 // 面板自动隐藏、切回启用过的自动恢复、关闭标签页对应面板随之销毁。
@@ -488,6 +478,243 @@ async function readYouTubePageInfo(tabId) {
   }
 }
 
+async function readYouTubeCaptionTracks(tabId, videoId) {
+  let targetTabId = Number(tabId) || 0;
+  if (!targetTabId) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    targetTabId = tab?.id || 0;
+  }
+  if (!targetTabId) return [];
+  try {
+    const result = await chrome.tabs.sendMessage(targetTabId, {
+      action: "getYouTubeCaptionTracks",
+      videoId,
+    });
+    return result?.success && Array.isArray(result.tracks) ? result.tracks : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+async function readYouTubeCaptionSource(tabId, videoId, languagePreference = []) {
+  let targetTabId = Number(tabId) || 0;
+  if (!targetTabId) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    targetTabId = tab?.id || 0;
+  }
+  if (!targetTabId) return { tracks: [], error: "没有找到当前 YouTube 标签页。" };
+
+  try {
+    const injection = await chrome.scripting.executeScript({
+      target: { tabId: targetTabId },
+      world: "MAIN",
+      args: [{ videoId, languagePreference }],
+      func: async ({ videoId: expectedVideoId, languagePreference: preferredLanguages }) => {
+        const parseObject = (value) => {
+          if (value && typeof value === "object") return value;
+          if (typeof value !== "string") return null;
+          try { return JSON.parse(value); } catch (error) { return null; }
+        };
+        const extractFromHtml = (html) => {
+          const source = String(html || "");
+          const hit = /ytInitialPlayerResponse\s*=\s*/g.exec(source);
+          if (!hit) return null;
+          const start = source.indexOf("{", hit.index + hit[0].length);
+          if (start < 0) return null;
+          let depth = 0;
+          let quoted = false;
+          let escaped = false;
+          for (let index = start; index < source.length; index += 1) {
+            const char = source[index];
+            if (quoted) {
+              if (escaped) escaped = false;
+              else if (char === "\\") escaped = true;
+              else if (char === '"') quoted = false;
+              continue;
+            }
+            if (char === '"') quoted = true;
+            else if (char === "{") depth += 1;
+            else if (char === "}" && --depth === 0) {
+              return parseObject(source.slice(start, index + 1));
+            }
+          }
+          return null;
+        };
+        const captionTracks = (response) =>
+          response?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+        const responseVideoId = (response) => String(response?.videoDetails?.videoId || "");
+        const candidates = [];
+        const player = document.getElementById("movie_player");
+        try { candidates.push(parseObject(player?.getPlayerResponse?.())); } catch (error) {}
+        candidates.push(
+          parseObject(document.querySelector("ytd-watch-flexy")?.data?.playerResponse),
+          parseObject(window.ytInitialPlayerResponse),
+          parseObject(window.ytplayer?.config?.args?.raw_player_response),
+          parseObject(window.ytplayer?.config?.args?.player_response),
+        );
+        let playerResponse = candidates.find(
+          (candidate) => responseVideoId(candidate) === expectedVideoId && Array.isArray(captionTracks(candidate)),
+        );
+        if (!playerResponse) {
+          const watchUrl = new URL("/watch", location.origin);
+          watchUrl.searchParams.set("v", expectedVideoId);
+          const watchResponse = await fetch(watchUrl, { credentials: "include", cache: "no-store" });
+          if (watchResponse.ok) playerResponse = extractFromHtml(await watchResponse.text());
+        }
+        if (responseVideoId(playerResponse) !== expectedVideoId) {
+          return { success: false, tracks: [], error: "当前播放器没有返回对应视频的字幕信息。" };
+        }
+        const tracks = (Array.isArray(captionTracks(playerResponse)) ? captionTracks(playerResponse) : [])
+          .map((track) => ({
+            baseUrl: String(track?.baseUrl || ""),
+            languageCode: String(track?.languageCode || ""),
+            name: String(track?.name?.simpleText || track?.name?.runs?.map((run) => run?.text || "").join("") || ""),
+            kind: track?.kind === "asr" ? "asr" : "",
+            isTranslatable: track?.isTranslatable === true,
+          }))
+          .filter((track) => track.baseUrl && track.languageCode);
+        if (!tracks.length) return { success: false, tracks, error: "当前 YouTube 页面没有可用字幕轨。" };
+
+        const preferences = (Array.isArray(preferredLanguages) ? preferredLanguages : [])
+          .map((language) => String(language || "").toLowerCase());
+        let selected = null;
+        for (const preferred of preferences) {
+          selected = tracks.find((track) => track.languageCode.toLowerCase() === preferred);
+          if (!selected) {
+            const base = preferred.split("-")[0];
+            selected = tracks.find((track) => track.languageCode.toLowerCase().split("-")[0] === base);
+          }
+          if (selected) break;
+        }
+        selected ||= tracks.find((track) => track.kind !== "asr") || tracks[0];
+
+        // ===== 主路径：捕获 YouTube 自己发出的 /api/timedtext 响应（参考沉浸式翻译）=====
+        // 直接 fetch baseUrl 常因缺 pot 校验返回 200 + 空 HTML 反爬壳；而播放器自己
+        // 取字幕的请求天生带合法 pot。所以先挂 XHR/fetch 钩子，再临时打开字幕模块
+        // 逼播放器自己请求一次，捕获到的响应体即是可用字幕。
+        const hookCaptures = [];
+        const nativeXhrOpen = XMLHttpRequest.prototype.open;
+        const nativeXhrSend = XMLHttpRequest.prototype.send;
+        const nativeFetch = window.fetch;
+        const looksLikeTimedText = (value) => String(value || "").includes("/api/timedtext");
+        const wrappedXhrOpen = function (method, url) {
+          this.__vaTimedTextUrl = String(url || "");
+          return nativeXhrOpen.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.open = wrappedXhrOpen;
+        const wrappedXhrSend = function (...sendArgs) {
+          const xhr = this;
+          if (looksLikeTimedText(xhr.__vaTimedTextUrl)) {
+            xhr.addEventListener("load", () => {
+              try {
+                if (xhr.status === 200 && xhr.responseText && xhr.responseText.length > 64) {
+                  hookCaptures.push(xhr.responseText);
+                }
+              } catch (error) {}
+            });
+          }
+          return nativeXhrSend.apply(this, sendArgs);
+        };
+        XMLHttpRequest.prototype.send = wrappedXhrSend;
+        const wrappedFetch = async function (...fetchArgs) {
+          const requestInput = fetchArgs[0];
+          const requestUrl = typeof requestInput === "string"
+            ? requestInput
+            : String(requestInput?.url || "");
+          const hookedResponse = await nativeFetch.apply(this, fetchArgs);
+          try {
+            if (looksLikeTimedText(requestUrl)) {
+              hookedResponse.clone().text().then((hookedBody) => {
+                if (hookedResponse.status === 200 && hookedBody.length > 64) {
+                  hookCaptures.push(hookedBody);
+                }
+              }).catch(() => {});
+            }
+          } catch (error) {}
+          return hookedResponse;
+        };
+        window.fetch = wrappedFetch;
+        let capturedBody = "";
+        try {
+          const playerEl =
+            document.getElementById("movie_player")
+            || document.querySelector(".html5-video-player");
+          // 先卸载再重载字幕模块：若播放器早已缓存当前区间的字幕，loadModule 是
+          // 空操作，不会发出新请求，钩子永远等不到捕获。强制卸载后重载，
+          // 播放器才会重新请求一次带有效 pot 的 timedtext。
+          if (typeof playerEl?.unloadModule === "function") {
+            try { playerEl.unloadModule("captions"); } catch (error) {}
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          if (typeof playerEl?.setOption === "function") {
+            try { playerEl.setOption("captions", "track", { languageCode: selected.languageCode }); } catch (error) {}
+          }
+          if (typeof playerEl?.loadModule === "function") {
+            try { playerEl.loadModule("captions"); } catch (error) {}
+          }
+          const hookDeadline = Date.now() + 6000;
+          while (Date.now() < hookDeadline && !hookCaptures.length) {
+            await new Promise((resolve) => setTimeout(resolve, 150));
+          }
+          if (typeof playerEl?.unloadModule === "function") {
+            try { playerEl.unloadModule("captions"); } catch (error) {}
+          }
+          capturedBody = hookCaptures.find((body) => {
+            const probe = body.trim();
+            return (
+              (probe.startsWith("{") && probe.includes("\"segs\""))
+              || /<(?:text|p)\b[^>]*>[\s\S]*?<\/(?:text|p)>/i.test(probe)
+              || (/^WEBVTT\b/i.test(probe) && probe.includes("-->"))
+            );
+          }) || "";
+        } finally {
+          // 无论成败立刻还原原型，避免污染页面其它网络代码。
+          // 条件还原：只在当前值仍是我们装的包装时才恢复；若其它代码已在其上再包一层，
+          // 保持现值不动（我们的包装闭包持有 native 引用，让其它包装先剥离即可）。
+          if (XMLHttpRequest.prototype.open === wrappedXhrOpen) {
+            XMLHttpRequest.prototype.open = nativeXhrOpen;
+          }
+          if (XMLHttpRequest.prototype.send === wrappedXhrSend) {
+            XMLHttpRequest.prototype.send = nativeXhrSend;
+          }
+          if (window.fetch === wrappedFetch) {
+            window.fetch = nativeFetch;
+          }
+        }
+        if (capturedBody) {
+          return {
+            success: true,
+            tracks,
+            body: capturedBody,
+            contentType: "captured-timedtext",
+            source: "timedtext-hook",
+          };
+        }
+
+        // 本地获取只保留「播放器 self-request 捕获」一条路径：直连 timedtext 会因
+        // pot 校验返回空壳，youtubei/get_transcript 依赖页面数据且常被拒，均已移除。
+        // 失败时给出可操作的指引——稍等重试或切换到字幕服务商 API。
+        return {
+          success: false,
+          tracks,
+          error:
+            "未能捕获 YouTube 播放器发出的字幕请求（可能刚打开页面、字幕模块未就绪）。"
+            + "请稍候一两秒后重试；若多次失败，可在设置页改用字幕服务商 API。",
+        };
+      },
+    });
+    const result = injection?.[0]?.result;
+    if (result && typeof result === "object") return result;
+    return { tracks: [], error: "当前 YouTube 页面没有返回字幕读取结果。" };
+  } catch (error) {
+    const tracks = await readYouTubeCaptionTracks(targetTabId, videoId);
+    return {
+      tracks,
+      error: tracks.length ? "无法在当前 YouTube 播放器上下文中请求字幕。" : (error?.message || "本地字幕读取失败。"),
+    };
+  }
+}
+
 // 优先命中站点隔离缓存；未命中后由对应站点适配器获取字幕。
 async function handleFetchTranscript(
   videoIdInput,
@@ -502,9 +729,16 @@ async function handleFetchTranscript(
     };
   }
 
+  const settings = await getSettings();
+  const selectedCaptionProvider = resource.site === "youtube"
+    ? settings.youtubeCaptionProviders[0]?.providerId || "local"
+    : "";
+
   if (!forceRefresh) {
     const cached = await BILI_CACHE.load(resource.cacheId, { page: resource.page });
-    if (cached?.transcript?.length) {
+    const providerMatches = resource.site !== "youtube"
+      || cached?.captionProviderId === selectedCaptionProvider;
+    if (cached?.transcript?.length && providerMatches) {
       debugLog("[Video Assistant] 命中字幕缓存：", resource.cacheId);
       // 标志放在展开之后：旧版本写进缓存的脏标志不能盖过本次的真实值。
       return { ...cached, success: true, fromCache: true };
@@ -512,7 +746,6 @@ async function handleFetchTranscript(
   }
 
   try {
-    const settings = await getSettings();
     let videoInfo;
     let entries;
     let language;
@@ -521,16 +754,24 @@ async function handleFetchTranscript(
     let availableTracks = [];
 
     if (resource.site === "youtube") {
-      const [pageInfo, transcriptResult] = await Promise.all([
-        readYouTubePageInfo(tabId),
-        VIDEO_YOUTUBE_API.fetchTranscriptWithFallback(
-          resource.videoId,
-          settings.youtubeCaptionProviders,
-        ),
-      ]);
+      const pageInfoPromise = readYouTubePageInfo(tabId);
+      const localCaptionSource = selectedCaptionProvider === "local"
+        ? await readYouTubeCaptionSource(tabId, resource.videoId, settings.subtitleLangPreference)
+        : { tracks: [] };
+      const pageInfo = await pageInfoPromise;
+      const transcriptResult = await VIDEO_YOUTUBE_API.fetchTranscriptWithFallback(
+        resource.videoId,
+        settings.youtubeCaptionProviders,
+        {
+          localTracks: localCaptionSource.tracks,
+          localCaptionSource,
+          languagePreference: settings.subtitleLangPreference,
+        },
+      );
       entries = transcriptResult.transcript;
       language = transcriptResult.language || "";
-      languageLabel = language || "Original";
+      languageLabel = transcriptResult.languageLabel || language || "Original";
+      isAiSubtitle = transcriptResult.isAi === true;
       availableTracks = transcriptResult.availableLanguages.map((lang) => ({
         lang,
         langLabel: lang,
@@ -604,6 +845,7 @@ async function handleFetchTranscript(
       languageLabel,
       isAiSubtitle,
       availableTracks,
+      captionProviderId: selectedCaptionProvider,
     };
 
     await BILI_CACHE.save(resource.cacheId, result, { page: resource.page });

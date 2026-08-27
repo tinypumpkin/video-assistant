@@ -391,6 +391,10 @@ select {
   transition: border-color 120ms ease, opacity 120ms ease, transform 120ms ease;
 }
 
+.caption-provider-card [hidden] {
+  display: none !important;
+}
+
 .caption-provider-card.drag-over {
   border-color: var(--accent);
   transform: translateY(2px);

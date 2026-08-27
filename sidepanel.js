@@ -2877,11 +2877,44 @@ function setNotesScope(scope) {
 // 图表渲染依赖可见容器尺寸，所以挂在 setTimeout 时机；组件内部自带
 // 防重入与失败回退（恢复源码文本），这里只保留 80ms 防抖调度。
 let mermaidTimer = null;
+let mermaidLibraryPromise = null;
+
+function ensureMermaidLibrary() {
+  if (window.mermaid) return Promise.resolve(window.mermaid);
+  if (mermaidLibraryPromise) return mermaidLibraryPromise;
+
+  mermaidLibraryPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = chrome.runtime.getURL("vendor/mermaid.min.js");
+    script.async = true;
+    script.addEventListener("load", () => {
+      if (window.mermaid) resolve(window.mermaid);
+      else reject(new Error("Mermaid loaded without a global export"));
+    }, { once: true });
+    script.addEventListener("error", () => {
+      reject(new Error("Mermaid failed to load"));
+    }, { once: true });
+    document.head.appendChild(script);
+  }).catch((error) => {
+    // 允许下次渲染重试；Markdown 源码仍保留在 .mermaid-block 中。
+    mermaidLibraryPromise = null;
+    throw error;
+  });
+  return mermaidLibraryPromise;
+}
 
 function scheduleMermaidRun() {
   if (mermaidTimer) return;
-  mermaidTimer = setTimeout(() => {
+  mermaidTimer = setTimeout(async () => {
     mermaidTimer = null;
+    const blocks = document.querySelectorAll(".mermaid-block:not([data-mermaid-done])");
+    if (!blocks.length) return;
+    try {
+      await ensureMermaidLibrary();
+    } catch (error) {
+      console.warn("Mermaid lazy load failed", error);
+      return;
+    }
     if (window.MermaidWidget?.upgradeMermaidBlocks) {
       window.MermaidWidget.upgradeMermaidBlocks(document);
     } else {
@@ -3533,7 +3566,7 @@ function setupEventListeners() {
   });
 }
 
-document.addEventListener("DOMContentLoaded", async () => {
+async function initializeSidepanel() {
   const stored = await chrome.storage.local.get([
     BILI_SETTINGS.STORAGE_KEY,
     BILI_SETTINGS.LEGACY_STORAGE_KEY,
@@ -3566,4 +3599,23 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupEventListeners();
   setInterval(trackPlayback, POLL_INTERVAL_MS);
   await syncWithActiveTab();
+}
+
+function showStartupError(error) {
+  console.error("[Video Assistant] 侧栏初始化失败：", error);
+  for (const id of SECTIONS) {
+    const section = el(id);
+    if (section) section.hidden = true;
+  }
+  const invalidated = /Extension context invalidated/i.test(String(error?.message || error));
+  el("errorTitle").textContent = invalidated ? "插件已更新" : "侧栏初始化失败";
+  el("errorText").textContent = invalidated
+    ? "当前侧栏仍属于旧版本。请关闭侧栏后重新点击插件图标。"
+    : String(error?.message || error || "未知错误，请关闭侧栏后重试。");
+  el("errorLoginLink").hidden = true;
+  el("errorState").hidden = false;
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  initializeSidepanel().catch(showStartupError);
 });

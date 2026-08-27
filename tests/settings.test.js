@@ -475,9 +475,9 @@ test("适用范围默认全开，只有显式 false 才关闭对应网站", () =
   assert.equal(scoped.bilibiliEnabled, true);
 });
 
-test("YouTube 字幕服务商默认 Supadata，并将旧单密钥迁移到有序列表", () => {
+test("YouTube 字幕默认本地获取，并保留旧 Supadata 单密钥", () => {
   const defaults = settings.normalizeAppSettings({}).youtubeCaptionProviders;
-  assert.deepEqual(defaults, [{ providerId: "supadata", apiKey: "" }]);
+  assert.deepEqual(defaults, [{ providerId: "local", apiKey: "" }]);
 
   const migrated = settings.normalizeAppSettings({ supadataApiKey: "  old-key  " });
   assert.deepEqual(migrated.youtubeCaptionProviders, [
@@ -485,7 +485,7 @@ test("YouTube 字幕服务商默认 Supadata，并将旧单密钥迁移到有序
   ]);
 });
 
-test("YouTube 字幕服务商保留顺序并丢弃未知项", () => {
+test("YouTube 字幕旧多项配置只保留第一个有效服务商", () => {
   const providers = settings.normalizeAppSettings({
     youtubeCaptionProviders: [
       { providerId: "transcriptapi", apiKey: "api-key" },
@@ -495,6 +495,15 @@ test("YouTube 字幕服务商保留顺序并丢弃未知项", () => {
   }).youtubeCaptionProviders;
   assert.deepEqual(providers, [
     { providerId: "transcriptapi", apiKey: "api-key" },
+  ]);
+});
+
+test("YouTube 字幕允许在下拉框中选择纯 API 模式", () => {
+  const providers = settings.normalizeYoutubeCaptionProviders([
+    { providerId: "captapi", apiKey: "capt-key" },
+    { providerId: "local", apiKey: "unexpected" },
+  ]);
+  assert.deepEqual(providers, [
     { providerId: "captapi", apiKey: "capt-key" },
   ]);
 });

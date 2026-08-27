@@ -83,7 +83,12 @@
 
   <main class="content">
     <!-- 字幕管线的公共状态 -->
-    <section id="loadingState" class="state" hidden>
+    <!--
+      默认就显示骨架。侧栏过去要等 4 MB 左右的同步脚本全部解析完才由 JS
+      取消 hidden，冷启动期间 Chrome 只能画出一块白板。初始化完成后 render()
+      会接管这里的显隐。
+    -->
+    <section id="loadingState" class="state">
       <div class="spinner" aria-hidden="true"></div>
       <p id="loadingTitle" class="state-title">正在获取字幕…</p>
       <p id="loadingSubtitle" class="state-text"></p>
@@ -421,21 +426,21 @@
   </div>
 
   <!-- lib/ai.js 用到 transcript 的时间戳格式化，必须先加载 -->
-  <script src="vendor/d3.min.js"></script>
-  <script src="vendor/markmap-view.min.js"></script>
-  <script src="vendor/markdown-it.min.js"></script>
-  <script src="vendor/katex.min.js"></script>
-  <script src="vendor/katex-auto-render.min.js"></script>
-  <script src="vendor/mermaid.min.js"></script>
-  <script src="lib/transcript.js"></script>
-  <script src="lib/ai.js"></script>
-  <script src="lib/concurrency.js"></script>
-  <script src="lib/markdown.js"></script>
-  <script src="lib/mermaid-widget.js"></script>
-  <script src="lib/note-mindmap.js"></script>
-  <script src="prompts/note-styles.js"></script>
-  <script src="settings.js"></script>
-  <script src="custom-select.js"></script>
-  <script src="sidepanel.js"></script>
+  <script defer src="vendor/d3.min.js"></script>
+  <script defer src="vendor/markmap-view.min.js"></script>
+  <script defer src="vendor/markdown-it.min.js"></script>
+  <script defer src="vendor/katex.min.js"></script>
+  <script defer src="vendor/katex-auto-render.min.js"></script>
+  <!-- 3.3 MB 的 Mermaid 只在正文真的出现图表时由 sidepanel.js 懒加载。 -->
+  <script defer src="lib/transcript.js"></script>
+  <script defer src="lib/ai.js"></script>
+  <script defer src="lib/concurrency.js"></script>
+  <script defer src="lib/markdown.js"></script>
+  <script defer src="lib/mermaid-widget.js"></script>
+  <script defer src="lib/note-mindmap.js"></script>
+  <script defer src="prompts/note-styles.js"></script>
+  <script defer src="settings.js"></script>
+  <script defer src="custom-select.js"></script>
+  <script defer src="sidepanel.js"></script>
 </body>
 </html>

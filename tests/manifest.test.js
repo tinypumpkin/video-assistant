@@ -17,6 +17,7 @@ test("是一份 MV3 清单", () => {
   // 侧边栏 API 需要 Chrome 116+。Edge 的版本号跟 Chromium 对齐，同一个门槛
   // 对它一样成立（Edge 自 114 起支持侧边栏）。
   assert.ok(Number(manifest.minimum_chrome_version) >= 116);
+  assert.ok(manifest.permissions.includes("scripting"));
 });
 
 /**
@@ -24,10 +25,10 @@ test("是一份 MV3 清单", () => {
  * setOptions({ tabId, enabled }) 才会生成独立的 tab 级面板实例——
  * 切到未启用的标签页自动隐藏、切回启用过的自动恢复、关标签页面板随
  * 之销毁、每个标签页的面板 state 互不串台。这是用户 4 项需求的根基。
- * 图标点击走 action.onClicked（浏览器回调天然是用户手势，不依赖
- * openPanelOnActionClick 的宽松判定，Edge 也稳）。
+ * 图标点击交给浏览器内建的 openPanelOnActionClick；它会使用当前标签页已生效
+ * 的配置，避免手写 open 与异步 setOptions 抢时序。
  */
-test("侧边栏 per-tab：按标签页 URL 启用，图标点击只 open", () => {
+test("侧边栏 per-tab：按标签页 URL 启用，图标点击使用浏览器内建打开行为", () => {
   assert.ok(manifest.side_panel?.default_path, "侧边栏路径应当由清单提供");
   assert.ok(manifest.permissions.includes("sidePanel"));
 
@@ -41,17 +42,26 @@ test("侧边栏 per-tab：按标签页 URL 启用，图标点击只 open", () =>
   );
   assert.match(source, /tabs\.onUpdated\.addListener/);
   assert.match(source, /isVideoUrl/);
-  // open 是点击回调里的第一个 API 调用（手势同步栈），不允许先 await 别的 API
+  // 工具栏图标由浏览器在 tab 配置生效后打开，避免手写 open 与 setOptions 竞态
   assert.match(
     source,
-    /action\.onClicked\.addListener\(async \(tab\) => \{\s*if \(!tab\?\.id\) return;[\s\S]{0,200}?await chrome\.sidePanel\.open/,
-    "图标点击回调里 open 必须是第一个 API 调用（先 await setOptions 会丢用户手势）",
+    /setPanelBehavior\(\{\s*openPanelOnActionClick:\s*true\s*\}\)/,
+    "工具栏图标应使用 Chrome 官方 side panel 打开行为",
   );
   // 已打开的标签页不重放 onUpdated：安装/启动时补一轮 setOptions
   assert.match(source, /onStartup\.addListener/);
   assert.match(source, /onInstalled\.addListener/);
-  // 不再交给 openPanelOnActionClick（它打开的是窗口级面板）
-  assert.doesNotMatch(source, /openPanelOnActionClick:\s*true/);
+  assert.doesNotMatch(source, /action\.onClicked\.addListener/);
+});
+
+test("侧栏冷启动立即显示静态骨架，重型 Mermaid 按需加载", () => {
+  const html = readText("sidepanel.html");
+  const sidepanel = readText("sidepanel.js");
+  assert.match(html, /id="loadingState" class="state">/);
+  assert.doesNotMatch(html, /src="vendor\/mermaid\.min\.js"/);
+  assert.match(sidepanel, /function ensureMermaidLibrary\(/);
+  assert.match(sidepanel, /chrome\.runtime\.getURL\("vendor\/mermaid\.min\.js"\)/);
+  assert.match(sidepanel, /initializeSidepanel\(\)\.catch\(showStartupError\)/);
 });
 
 test("同一份清单能投 Chrome 应用商店和 Edge 加载项", () => {
@@ -114,6 +124,20 @@ test("service worker importScripts 的依赖都存在", () => {
   for (const file of files) {
     assert.ok(exists(file), `importScripts 引用了不存在的文件：${file}`);
   }
+});
+
+test("YouTube 本地字幕在当前页面 MAIN world 请求，并支持单选字幕来源", () => {
+  const source = readText("background.js");
+  assert.match(source, /chrome\.scripting\.executeScript/);
+  assert.match(source, /world:\s*"MAIN"/);
+  assert.match(source, /localCaptionSource/);
+  // 本地获取唯一路径：钩子捕获播放器自己的 /api/timedtext 响应（带 pot）。
+  assert.match(source, /timedtext-hook/);
+  assert.match(source, /loadModule\("captions"\)/);
+  assert.match(source, /unloadModule\("captions"\)/);
+  // 已移除的备用路径不得回潮：直连 timedtext 会因 pot 校验返回空壳，
+  // youtubei/get_transcript 依赖页面数据且常被拒。
+  assert.doesNotMatch(source, /api\/timedtext.*toString\(\)|youtubei\/v1\/get_transcript/);
 });
 
 test("HTML 引用的脚本与样式都存在", () => {
@@ -179,23 +203,25 @@ test("打包白名单包含下拉组件及其图标资源", () => {
   assert.match(script, /matchAll\(\/url\\\(/, "打包自检会继续校验 CSS 的 url() 依赖");
 });
 
-test("字幕服务商支持多项配置、排序回退与独立保存", () => {
+test("字幕服务商使用单一下拉框，默认本地并可切换 API", () => {
   const html = readText("options.html");
   const script = readText("options.js");
   const settings = readText("settings.js");
   const background = readText("background.js");
-  assert.match(html, /id="addCaptionProviderBtn"/);
+  assert.doesNotMatch(html, /id="addCaptionProviderBtn"/);
   assert.match(html, /id="saveCaptionProvidersBtn"/);
   assert.match(html, /id="captionProviderList"/);
   assert.match(script, /renderCaptionProviders/);
-  assert.match(script, /moveCaptionProvider/);
-  assert.match(script, /wireCaptionProviderDrag/);
-  assert.match(script, /caption-provider-drag-handle/);
+  assert.doesNotMatch(script, /moveCaptionProvider/);
+  assert.doesNotMatch(script, /wireCaptionProviderDrag/);
   assert.match(script, /saveCaptionProviders/);
   assert.match(settings, /captapi/);
   assert.match(settings, /transcriptfetch/);
   assert.match(settings, /transcriptapi/);
   assert.match(background, /fetchTranscriptWithFallback/);
+  assert.match(settings, /id: "local"/);
+  assert.match(background, /readYouTubeCaptionTracks/);
+  assert.match(readText("content-youtube.js"), /getYouTubeCaptionTracks/);
 });
 
 test("模型配置保存按钮使用明确文案", () => {

@@ -228,6 +228,7 @@ function startYouTube({
   dom,
   href = "https://www.youtube.com/watch?v=jNQXAC9IVRw",
   sendMessage = () => Promise.resolve({ success: true }),
+  fetchImpl,
 }) {
   const intervals = [];
   const messageListeners = [];
@@ -248,6 +249,7 @@ function startYouTube({
     // 站点脚本会用 URLSearchParams 解析 ?v=、new URL() 处理链接。
     URLSearchParams,
     URL,
+    fetch: fetchImpl,
     navigator: { clipboard: { writeText: () => Promise.resolve() } },
     location: { href, pathname: "/watch", search: "?v=jNQXAC9IVRw" },
     window: {
@@ -280,6 +282,54 @@ async function runYouTube(options) {
   await flush();
   return handle;
 }
+
+test("YT：从当前 watch 页读取公开字幕轨并校验视频 ID", async () => {
+  const dom = createDom();
+  const html = `<!doctype html><script>var ytInitialPlayerResponse = ${JSON.stringify({
+    videoDetails: { videoId: "jNQXAC9IVRw" },
+    captions: {
+      playerCaptionsTracklistRenderer: {
+        captionTracks: [{
+          baseUrl: "https://www.youtube.com/api/timedtext?v=jNQXAC9IVRw&lang=en",
+          languageCode: "en",
+          name: { simpleText: "English" },
+          kind: "asr",
+        }],
+      },
+    },
+  })};</script>`;
+  let requested;
+  const handle = await runYouTube({
+    dom,
+    fetchImpl: async (url, options) => {
+      requested = { url, options };
+      return { ok: true, async text() { return html; } };
+    },
+  });
+  let reply;
+  const keepAlive = handle.messageListeners[0](
+    { action: "getYouTubeCaptionTracks", videoId: "jNQXAC9IVRw" },
+    {},
+    (value) => { reply = value; },
+  );
+  assert.equal(keepAlive, true);
+  await flush();
+  assert.equal(reply.success, true);
+  assert.equal(reply.tracks[0].languageCode, "en");
+  assert.equal(reply.tracks[0].kind, "asr");
+  assert.equal(requested.options.credentials, "include");
+  assert.equal(new URL(requested.url).searchParams.get("v"), "jNQXAC9IVRw");
+
+  let mismatch;
+  handle.messageListeners[0](
+    { action: "getYouTubeCaptionTracks", videoId: "different" },
+    {},
+    (value) => { mismatch = value; },
+  );
+  await flush();
+  assert.equal(mismatch.success, false);
+  assert.match(mismatch.error, /当前标签页/);
+});
 
 const YT_NOTE_ID = "ytd-note-button";
 const YT_NOTE_LABEL = "ytd-note-label";

@@ -115,9 +115,22 @@ var BILI_SETTINGS = (() => {
   const CUSTOM_PRESET_ID = "custom";
   const MAX_AI_PROVIDERS = 8;
 
-  // YouTube 字幕服务商是独立于 AI Provider 的有序回退链。每项只保存服务商和密钥，
-  // 请求地址与鉴权方式由 lib/youtube-api.js 固定，避免用户误把密钥发到错误域名。
+  // YouTube 字幕来源只允许选择一项。请求地址与鉴权方式由
+  // lib/youtube-api.js 固定，避免用户误把密钥发到错误域名。
   const YOUTUBE_CAPTION_PROVIDERS = Object.freeze([
+    {
+      id: "local",
+      label: "本地获取",
+      labelEn: "Local YouTube",
+      origin: "https://www.youtube.com/",
+      docsUrl: "",
+      dashboardUrl: "",
+      requiresApiKey: false,
+      detail:
+        "直接读取当前 YouTube 页面公开的字幕轨，无需 API Key；选择本项时不会调用第三方字幕服务。",
+      detailEn:
+        "Reads published caption tracks directly from the current YouTube page without an API key. No third-party caption service is called while selected.",
+    },
     {
       id: "supadata",
       label: "Supadata",
@@ -125,9 +138,9 @@ var BILI_SETTINGS = (() => {
       docsUrl: "https://docs.supadata.ai/get-transcript",
       dashboardUrl: "https://dash.supadata.ai",
       detail:
-        "只获取 YouTube 现有字幕；没有字幕时会自动尝试列表中的下一项。",
+        "通过 Supadata API 获取 YouTube 现有字幕。",
       detailEn:
-        "Fetches existing YouTube captions only; if unavailable, the next provider is tried.",
+        "Fetches existing YouTube captions through the Supadata API.",
     },
     {
       id: "captapi",
@@ -136,9 +149,9 @@ var BILI_SETTINGS = (() => {
       docsUrl: "https://captapi.com/how-to/youtube-transcript",
       dashboardUrl: "https://captapi.com/dashboard",
       detail:
-        "返回 YouTube 已发布的带时间戳字幕；没有字幕时会自动尝试列表中的下一项。",
+        "通过 Captapi 返回 YouTube 已发布的带时间戳字幕。",
       detailEn:
-        "Returns published YouTube captions with timestamps; if unavailable, the next provider is tried.",
+        "Returns published YouTube captions with timestamps through Captapi.",
     },
     {
       id: "transcriptfetch",
@@ -147,9 +160,9 @@ var BILI_SETTINGS = (() => {
       docsUrl: "https://transcriptfetch.com/docs/endpoints",
       dashboardUrl: "https://transcriptfetch.com/dashboard",
       detail:
-        "以 captions 模式只读取现有字幕；没有字幕时会自动尝试列表中的下一项。",
+        "通过 TranscriptFetch 的 captions 模式读取现有字幕。",
       detailEn:
-        "Uses captions mode to read existing captions only; if unavailable, the next provider is tried.",
+        "Uses TranscriptFetch captions mode to read existing captions.",
     },
     {
       id: "transcriptapi",
@@ -163,7 +176,7 @@ var BILI_SETTINGS = (() => {
         "Returns YouTube captions with timestamps and supports language-priority selection.",
     },
   ]);
-  const MAX_YOUTUBE_CAPTION_PROVIDERS = 8;
+  const MAX_YOUTUBE_CAPTION_PROVIDERS = 1;
 
   // 并发上限压在 8：再高容易撞限流；超时上限 10 分钟是为了照顾本地推理。
   const LIMITS = Object.freeze({
@@ -202,7 +215,7 @@ var BILI_SETTINGS = (() => {
     aiConcurrency: LIMITS.concurrency.default,
     aiTimeoutSeconds: LIMITS.timeoutSeconds.default,
     youtubeCaptionProviders: Object.freeze([
-      Object.freeze({ providerId: "supadata", apiKey: "" }),
+      Object.freeze({ providerId: "local", apiKey: "" }),
     ]),
     youtubeEnabled: true,
     bilibiliEnabled: true,
@@ -305,22 +318,29 @@ var BILI_SETTINGS = (() => {
   }
 
   function normalizeYoutubeCaptionProviders(input, legacySupadataApiKey = "") {
-    // 有数组即视为用户已明确编辑过列表；即使是空数组也要保留，让用户可以先清空再添加。
-    const source = Array.isArray(input)
+    // 新安装默认本地获取。旧的多服务商列表只保留第一项，相当于迁移为
+    // 单选模式；旧版只有 Supadata 密钥时仍保留用户已经配置的服务商。
+    const source = Array.isArray(input) && input.length
       ? input
-      : [{ providerId: "supadata", apiKey: legacySupadataApiKey }];
-    return source
-      .slice(0, MAX_YOUTUBE_CAPTION_PROVIDERS)
+      : (legacySupadataApiKey
+          ? [{ providerId: "supadata", apiKey: legacySupadataApiKey }]
+          : [{ providerId: "local", apiKey: "" }]);
+    const normalized = source
       .map((item) => {
         const raw = item && typeof item === "object" ? item : {};
         const providerId = typeof raw.providerId === "string" ? raw.providerId : "";
         if (!captionProviderById(providerId)) return null;
         return {
           providerId,
-          apiKey: typeof raw.apiKey === "string" ? raw.apiKey.trim().slice(0, 1000) : "",
+          apiKey: providerId === "local"
+            ? ""
+            : (typeof raw.apiKey === "string" ? raw.apiKey.trim().slice(0, 1000) : ""),
         };
       })
       .filter(Boolean);
+    return normalized.length
+      ? [normalized[0]]
+      : [{ providerId: "local", apiKey: "" }];
   }
 
   const LANG_CODE_PATTERN = /^[A-Za-z]{2,8}(-[A-Za-z0-9]{2,8})*$/;

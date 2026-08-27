@@ -28,21 +28,15 @@ const EN_TEXT = Object.freeze({
   "保存后已清理最早的": "After saving, removed the oldest",
   "条笔记。": "notes.",
   "YouTube 字幕服务": "YouTube caption services",
-  "Bilibili 字幕直接读取平台接口。YouTube 可配置多个字幕服务商，按从上到下的顺序尝试；上一项失败后才会请求下一项。可直接拖动卡片调整顺序。": "Bilibili captions are read from the platform API. Configure multiple YouTube caption providers; they are tried from top to bottom, and the next provider is requested only after the previous one fails. Drag cards to reorder them.",
-  "添加字幕服务商": "Add caption provider",
-  "保存字幕服务商": "Save caption providers",
+  "Bilibili 字幕直接读取平台接口。YouTube 默认使用本地获取；如本地不可用，可在下拉框中改用一个字幕服务商 API。": "Bilibili captions are read from the platform API. YouTube uses local retrieval by default; if it is unavailable, choose one caption provider API from the dropdown.",
+  "保存字幕服务商": "Save caption provider",
   "API Key 仅保存在本机扩展存储，且只会发送给对应服务商。保存时 Chrome 会请求已配置服务商的域名访问权限。": "API keys are stored only in local extension storage and sent only to their matching provider. Saving requests Chrome host access for configured provider domains.",
   "字幕服务商": "Caption provider",
   "服务商说明": "Provider notes",
   "申请 API Key ↗": "Get API key ↗",
   "查看 API 文档、额度与限制 ↗": "View API docs, quota & limits ↗",
-  "上移": "Move up",
-  "下移": "Move down",
-  "删除": "Remove",
-  "尚未添加字幕服务商。": "No caption provider added yet.",
-  "字幕服务商已保存": "Caption providers saved",
-  "最多只能添加 8 个字幕服务商。": "You can add up to 8 caption providers.",
-  "没有获得已配置字幕服务商的域名权限。": "Host permission was not granted for every configured caption provider.",
+  "字幕服务商已保存": "Caption provider saved",
+  "没有获得已配置字幕服务商的域名权限。": "Host permission was not granted for the configured caption provider.",
   "AI 服务": "AI services",
   "可配置多个 AI 服务。按从上到下的顺序请求，前一项发生可恢复故障后才会尝试下一项；直接拖动卡片即可调整顺序。": "Configure multiple AI services. They are tried from top to bottom; the next service is requested only after a recoverable failure. Drag cards to reorder them.",
   "添加 AI 服务": "Add AI service",
@@ -198,7 +192,6 @@ let overviewPrompts = BILI_SETTINGS.normalizeOverviewPrompts();
 let youtubeCaptionProviders = BILI_SETTINGS.normalizeYoutubeCaptionProviders();
 let aiProviders = BILI_SETTINGS.normalizeAiProviders();
 let draggedAiProviderId = "";
-let draggedCaptionProviderIndex = -1;
 let savedNoteLimit = BILI_SETTINGS.LIMITS.noteLimit.default;
 
 const statusTimers = new WeakMap();
@@ -970,68 +963,21 @@ function providerDetail(profile) {
   return uiLanguage === "en" ? profile.detailEn : profile.detail;
 }
 
-function captionProviderButton(text, { disabled = false, onClick } = {}) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "ghost-btn caption-provider-control";
-  button.textContent = translateText(text);
-  button.disabled = disabled;
-  button.addEventListener("click", onClick);
-  return button;
+function captionProviderLabel(profile) {
+  return uiLanguage === "en" ? profile.labelEn || profile.label : profile.label;
 }
 
 function renderCaptionProviders(input = youtubeCaptionProviders) {
   const providers = BILI_SETTINGS.normalizeYoutubeCaptionProviders(input);
   youtubeCaptionProviders = providers;
   captionProviderList.textContent = "";
+  const provider = providers[0];
+  const profile = BILI_SETTINGS.captionProviderById(provider.providerId);
+  const isLocal = provider.providerId === "local";
 
-  if (!providers.length) {
-    const empty = document.createElement("p");
-    empty.className = "field-hint caption-provider-empty";
-    empty.textContent = translateText("尚未添加字幕服务商。");
-    captionProviderList.appendChild(empty);
-    return;
-  }
-
-  providers.forEach((provider, index) => {
-    const profile = BILI_SETTINGS.captionProviderById(provider.providerId);
-    if (!profile) return;
-
-    const card = document.createElement("article");
-    card.className = "caption-provider-card";
-    card.dataset.captionProvider = "true";
-
-    const header = document.createElement("div");
-    header.className = "caption-provider-header";
-    const title = document.createElement("div");
-    title.className = "caption-provider-title";
-    const dragHandle = document.createElement("span");
-    dragHandle.className = "caption-provider-drag-handle";
-    dragHandle.textContent = "⠿";
-    dragHandle.draggable = true;
-    dragHandle.title = translateText("拖动排序");
-    dragHandle.setAttribute("aria-label", translateText("拖动排序"));
-    const order = document.createElement("span");
-    order.className = "caption-provider-order";
-    order.textContent = String(index + 1);
-    const label = document.createElement("strong");
-    label.textContent = translateText("字幕服务商");
-    title.append(dragHandle, order, label);
-
-    const controls = document.createElement("div");
-    controls.className = "caption-provider-controls";
-    controls.append(
-      captionProviderButton("上移", {
-        disabled: index === 0,
-        onClick: () => moveCaptionProvider(index, -1),
-      }),
-      captionProviderButton("下移", {
-        disabled: index === providers.length - 1,
-        onClick: () => moveCaptionProvider(index, 1),
-      }),
-      captionProviderButton("删除", { onClick: () => removeCaptionProvider(index) }),
-    );
-    header.append(title, controls);
+  const card = document.createElement("article");
+  card.className = "caption-provider-card";
+  card.dataset.captionProvider = "true";
 
     const providerField = document.createElement("label");
     providerField.className = "field";
@@ -1043,15 +989,13 @@ function renderCaptionProviders(input = youtubeCaptionProviders) {
     for (const optionProfile of BILI_SETTINGS.YOUTUBE_CAPTION_PROVIDERS) {
       const option = document.createElement("option");
       option.value = optionProfile.id;
-      option.textContent = optionProfile.label;
+      option.textContent = captionProviderLabel(optionProfile);
       providerSelect.appendChild(option);
     }
     providerSelect.value = provider.providerId;
     providerSelect.addEventListener("change", () => {
-      const next = readCaptionProviders();
       // 不同服务商的密钥不可复用，切换时主动清空，避免误发到另一个域名。
-      next[index] = { providerId: providerSelect.value, apiKey: "" };
-      renderCaptionProviders(next);
+      renderCaptionProviders([{ providerId: providerSelect.value, apiKey: "" }]);
     });
     providerField.append(providerLabel, providerSelect);
 
@@ -1068,6 +1012,7 @@ function renderCaptionProviders(input = youtubeCaptionProviders) {
     enableApiKeyMask(keyInput);
     setApiKeyValue(keyInput, provider.apiKey);
     keyField.append(keyLabel, keyInput);
+    keyField.hidden = profile.requiresApiKey === false;
 
     const info = document.createElement("section");
     info.className = "caption-provider-info";
@@ -1078,90 +1023,21 @@ function renderCaptionProviders(input = youtubeCaptionProviders) {
     const links = document.createElement("p");
     links.className = "caption-provider-links";
     const dashboard = document.createElement("a");
-    dashboard.href = profile.dashboardUrl;
+    dashboard.href = profile.dashboardUrl || "#";
     dashboard.target = "_blank";
     dashboard.rel = "noreferrer";
     dashboard.textContent = translateText("申请 API Key ↗");
     const docs = document.createElement("a");
-    docs.href = profile.docsUrl;
+    docs.href = profile.docsUrl || "#";
     docs.target = "_blank";
     docs.rel = "noreferrer";
     docs.textContent = translateText("查看 API 文档、额度与限制 ↗");
     links.append(dashboard, docs);
+    links.hidden = !profile.dashboardUrl && !profile.docsUrl;
     info.append(infoTitle, detail, links);
 
-    card.append(header, providerField, keyField, info);
-    wireCaptionProviderDrag(card, dragHandle, index);
-    captionProviderList.appendChild(card);
-  });
-}
-
-function moveCaptionProvider(index, direction) {
-  const providers = readCaptionProviders();
-  const target = index + direction;
-  if (target < 0 || target >= providers.length) return;
-  [providers[index], providers[target]] = [providers[target], providers[index]];
-  renderCaptionProviders(providers);
-}
-
-function moveCaptionProviderByIndex(sourceIndex, targetIndex) {
-  if (sourceIndex === targetIndex || sourceIndex < 0 || targetIndex < 0) return;
-  const providers = readCaptionProviders();
-  if (sourceIndex >= providers.length || targetIndex >= providers.length) return;
-  const [source] = providers.splice(sourceIndex, 1);
-  providers.splice(targetIndex, 0, source);
-  renderCaptionProviders(providers);
-}
-
-function wireCaptionProviderDrag(card, handle, index) {
-  handle.addEventListener("dragstart", (event) => {
-    draggedCaptionProviderIndex = index;
-    card.classList.add("dragging");
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", String(index));
-  });
-  handle.addEventListener("dragend", () => {
-    draggedCaptionProviderIndex = -1;
-    document.querySelectorAll(".caption-provider-card.dragging, .caption-provider-card.drag-over")
-      .forEach((element) => element.classList.remove("dragging", "drag-over"));
-  });
-  card.addEventListener("dragover", (event) => {
-    if (draggedCaptionProviderIndex < 0 || draggedCaptionProviderIndex === index) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    card.classList.add("drag-over");
-  });
-  card.addEventListener("dragleave", () => card.classList.remove("drag-over"));
-  card.addEventListener("drop", (event) => {
-    event.preventDefault();
-    const draggedValue = event.dataTransfer?.getData("text/plain") || "";
-    const sourceIndex = /^\d+$/.test(draggedValue)
-      ? Number(draggedValue)
-      : draggedCaptionProviderIndex;
-    card.classList.remove("drag-over");
-    moveCaptionProviderByIndex(sourceIndex, index);
-  });
-}
-
-function removeCaptionProvider(index) {
-  const providers = readCaptionProviders();
-  providers.splice(index, 1);
-  renderCaptionProviders(providers);
-}
-
-function addCaptionProvider() {
-  const providers = readCaptionProviders();
-  if (providers.length >= BILI_SETTINGS.MAX_YOUTUBE_CAPTION_PROVIDERS) {
-    showStatus(captionProvidersStatus, "最多只能添加 8 个字幕服务商。", {
-      sticky: true,
-      error: true,
-    });
-    return;
-  }
-  providers.push({ providerId: "supadata", apiKey: "" });
-  renderCaptionProviders(providers);
-  const cards = captionProviderList.querySelectorAll("[data-caption-provider]");
-  cards[cards.length - 1]?.querySelector('[data-field="captionApiKey"]')?.focus();
+  card.append(providerField, keyField, info);
+  captionProviderList.appendChild(card);
 }
 
 async function saveCaptionProviders() {
@@ -1225,7 +1101,6 @@ async function load() {
 youtubeEnabled.addEventListener("change", saveSiteScope);
 bilibiliEnabled.addEventListener("change", saveSiteScope);
 document.getElementById("addAiProviderBtn").addEventListener("click", addAiProvider);
-document.getElementById("addCaptionProviderBtn").addEventListener("click", addCaptionProvider);
 document
   .getElementById("saveCaptionProvidersBtn")
   .addEventListener("click", saveCaptionProviders);
