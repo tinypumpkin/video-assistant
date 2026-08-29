@@ -388,77 +388,20 @@ select {
   border: 1px solid var(--border);
   border-radius: 9px;
   background: color-mix(in srgb, var(--bg) 72%, var(--card));
-  transition: border-color 120ms ease, opacity 120ms ease, transform 120ms ease;
 }
 
 .caption-provider-card [hidden] {
   display: none !important;
 }
 
-.caption-provider-card.drag-over {
-  border-color: var(--accent);
-  transform: translateY(2px);
-}
-
-.caption-provider-card.dragging {
-  opacity: 0.45;
-}
-
-.caption-provider-header,
-.caption-provider-title,
-.caption-provider-controls,
 .caption-provider-links,
 .caption-provider-actions {
   display: flex;
   align-items: center;
 }
 
-.caption-provider-header {
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.caption-provider-title,
-.caption-provider-controls,
 .caption-provider-links {
   gap: 7px;
-}
-
-.caption-provider-title strong {
-  font-size: 13px;
-}
-
-.caption-provider-order {
-  display: inline-grid;
-  width: 20px;
-  height: 20px;
-  place-items: center;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
-.caption-provider-drag-handle {
-  display: inline-grid;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  color: var(--text-muted);
-  font-size: 16px;
-  line-height: 1;
-  cursor: grab;
-  user-select: none;
-}
-
-.caption-provider-drag-handle:active {
-  cursor: grabbing;
-}
-
-.caption-provider-control {
-  padding: 4px 7px;
-  font-size: 11px;
 }
 
 .caption-provider-info {
@@ -491,10 +434,6 @@ select {
 .caption-provider-actions {
   gap: 10px;
   margin-top: 16px;
-}
-
-.caption-provider-empty {
-  margin: 0;
 }
 
 .guide-section {

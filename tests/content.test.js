@@ -43,6 +43,9 @@ function createDom() {
       setAttribute(name, value) {
         this.attributes[name] = String(value);
       },
+      getAttribute(name) {
+        return this.attributes[name] ?? null;
+      },
       appendChild(child) {
         this.children.push(child);
         child.isConnected = true;
@@ -282,6 +285,27 @@ async function runYouTube(options) {
   await flush();
   return handle;
 }
+
+test("两站内容脚本提供版本握手，后台可识别失效或旧版本页面", async () => {
+  const bili = await run({ dom: createDom() });
+  const youtube = await runYouTube({ dom: createDom() });
+
+  for (const [handle, site] of [[bili, "bilibili"], [youtube, "youtube"]]) {
+    let reply;
+    for (const listener of handle.messageListeners) {
+      listener(
+        { action: "videoAssistantContentScriptPing" },
+        {},
+        (value) => { reply = value; },
+      );
+      if (reply) break;
+    }
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(reply)),
+      { success: true, site, version: "test" },
+    );
+  }
+});
 
 test("YT：从当前 watch 页读取公开字幕轨并校验视频 ID", async () => {
   const dom = createDom();

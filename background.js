@@ -58,6 +58,55 @@ function isSiteEnabled(settings, site) {
   return false;
 }
 
+function contentScriptSite(url) {
+  const value = String(url || "");
+  if (/^https:\/\/www\.youtube\.com\/watch(?:\?|$)/i.test(value)) return "youtube";
+  if (/^https:\/\/www\.bilibili\.com\/(?:video|list)\//i.test(value)) return "bilibili";
+  return "";
+}
+
+async function ensureContentScriptForTab(tab) {
+  const tabId = Number(tab?.id) || 0;
+  const site = contentScriptSite(tab?.url);
+  if (!tabId || !site) return false;
+
+  const version = chrome.runtime.getManifest().version;
+  try {
+    const reply = await chrome.tabs.sendMessage(tabId, {
+      action: "videoAssistantContentScriptPing",
+    });
+    if (reply?.success && reply.version === version && reply.site === site) return true;
+  } catch (error) {
+    // 页面可能在扩展更新前已经打开，旧 content script 已失效或根本没有注入。
+  }
+
+  try {
+    // 先清掉旧脚本留在页面上的无效按钮；它们仍可见，但事件处理器已经无法
+    // 连接新版 service worker，正是“必须刷新页面才可用”的直接表现。
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      args: [site],
+      func: (targetSite) => {
+        const ids = targetSite === "youtube"
+          ? ["ytd-digest-button", "ytd-note-button", "ytd-note-toast"]
+          : ["bili-digest-button", "bili-digest-note-button", "bili-digest-overlay"];
+        for (const id of ids) document.getElementById(id)?.remove();
+      },
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: [
+        "content-shared.js",
+        site === "youtube" ? "content-youtube.js" : "content-bilibili.js",
+      ],
+    });
+    return true;
+  } catch (error) {
+    console.warn(`[Video Assistant] 无法恢复 ${site} 标签页的内容脚本：`, error);
+    return false;
+  }
+}
+
 async function broadcastSiteScope(settings) {
   const message = {
     action: "siteScopeChanged",
@@ -115,7 +164,28 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       enabled: Boolean(video),
       path: "sidepanel.html",
     })
-    .catch(() => {});
+    .catch((error) => console.warn("[Video Assistant] 无法配置标签页侧栏：", error));
+});
+
+// 声明式 content script 只会随文档导航注入。扩展更新、B 站 SPA 从首页进入
+// 播放页等场景可能没有新脚本；页面完成或切换到该标签页时做一次版本握手并修复。
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete") return;
+  ensureContentScriptForTab({ ...tab, id: tabId }).catch(() => {});
+});
+
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  chrome.tabs.get(tabId)
+    .then(async (tab) => {
+      const video = isVideoUrl(tab.url || "");
+      await chrome.sidePanel.setOptions({
+        tabId,
+        enabled: Boolean(video),
+        path: "sidepanel.html",
+      });
+      if (video) await ensureContentScriptForTab(tab);
+    })
+    .catch((error) => console.warn("[Video Assistant] 无法同步活动标签页：", error));
 });
 
 // 已打开的标签页不会重放 onUpdated：安装/启动时把现有标签页全部过一遍，
@@ -125,13 +195,17 @@ async function syncSidePanelForExistingTabs() {
     const tabs = await chrome.tabs.query({});
     for (const tab of tabs) {
       if (!tab.id) continue;
-      chrome.sidePanel
-        .setOptions({
+      const video = isVideoUrl(tab.url || "");
+      try {
+        await chrome.sidePanel.setOptions({
           tabId: tab.id,
-          enabled: isVideoUrl(tab.url || ""),
+          enabled: video,
           path: "sidepanel.html",
-        })
-        .catch(() => {});
+        });
+        if (video) await ensureContentScriptForTab(tab);
+      } catch (error) {
+        console.warn("[Video Assistant] 无法同步现有标签页：", error);
+      }
     }
   } catch (error) {
     // 查询失败（比如浏览器还没就绪）不致命，等下一次 onUpdated 再配。
@@ -153,15 +227,15 @@ async function handleOpenSidePanel(tab) {
   if (!tab) return { success: false };
 
   try {
-    // open() 必须落在用户手势的同步调用栈里（先 await 别的 API 就丢手势）。
-    // per-tab 启用配置已由 tabs.onUpdated 按 URL 提前设好，这里只负责打开。
-    // 万一配置还没落定（页面刚加载就点按钮），顺手补一次 setOptions 兜底，
-    // 但它在 open 之后发起，不影响 open 的手势上下文。
+    // 两个 API 都要在用户手势同步调用栈内发起。先排入 tab-specific 配置，再
+    // 排入 open，避免 open 先命中 manifest 的全局面板、把 ownerTabId 锁到旧标签页。
+    const configuring = chrome.sidePanel.setOptions({
+      tabId: tab.id,
+      enabled: true,
+      path: "sidepanel.html",
+    });
     const opening = chrome.sidePanel.open({ tabId: tab.id });
-    chrome.sidePanel
-      .setOptions({ tabId: tab.id, enabled: true, path: "sidepanel.html" })
-      .catch(() => {});
-    await opening;
+    await Promise.all([configuring, opening]);
   } catch (error) {
     console.warn("[Bilibili Digest] 打开侧边栏被拒绝：", error);
     return { success: false, needsToolbarClick: true };
@@ -691,8 +765,8 @@ async function readYouTubeCaptionSource(tabId, videoId, languagePreference = [])
           };
         }
 
-        // 本地获取只保留「播放器 self-request 捕获」一条路径：直连 timedtext 会因
-        // pot 校验返回空壳，youtubei/get_transcript 依赖页面数据且常被拒，均已移除。
+        // 本地获取只保留「播放器 self-request 捕获」一条路径；不再从后台直连
+        // 字幕 URL，避免重复走到 HTTP 200 但正文为空的无效响应。
         // 失败时给出可操作的指引——稍等重试或切换到字幕服务商 API。
         return {
           success: false,

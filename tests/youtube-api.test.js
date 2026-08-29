@@ -139,74 +139,24 @@ test("本地字幕优先使用当前页面上下文返回的正文", async () =>
       localCaptionSource: {
         body: '<transcript><text start="0" dur="1">From page</text></transcript>',
       },
-      fetchImpl: async () => { throw new Error("后台不应再次请求 timedtext"); },
     },
   );
   assert.equal(result.transcript[0].text, "From page");
 });
 
-test("本地字幕优先采用 YouTube 页面 get_transcript 返回的完整分段", async () => {
-  const result = await youtube.fetchLocalTranscript(
-    [{ baseUrl: "https://www.youtube.com/api/timedtext?v=abc&lang=en", languageCode: "en", name: "English" }],
-    ["en"],
-    {
-      localCaptionSource: {
-        transcript: [{ text: "From youtubei", start: 1.5, duration: 2, language: "en" }],
-        language: "en",
-        languageLabel: "English",
-        source: "youtubei-transcript",
-      },
-      fetchImpl: async () => { throw new Error("已有页面转录时不应再请求空 timedtext"); },
-    },
-  );
-  assert.deepEqual(result.transcript[0], {
-    text: "From youtubei",
-    start: 1.5,
-    duration: 2,
-    language: "en",
-  });
-  assert.equal(result.languageLabel, "English");
-});
-
-test("本地字幕请求强制 JSON3，并保留可选轨与 AI 字幕标志", async () => {
-  let requestedUrl;
-  let requestedOptions;
-  const result = await youtube.fetchLocalTranscript(
-    [
-      {
-        baseUrl: "https://www.youtube.com/api/timedtext?v=abc&lang=en&fmt=srv3",
+test("本地字幕未捕获正文时直接失败，不再回退直连字幕 URL", async () => {
+  await assert.rejects(
+    youtube.fetchLocalTranscript(
+      [{
+        baseUrl: "https://www.youtube.com/api/timedtext?v=abc&lang=en",
         languageCode: "en",
-        name: "English (auto-generated)",
-        kind: "asr",
-      },
-      {
-        baseUrl: "https://www.youtube.com/api/timedtext?v=abc&lang=zh",
-        languageCode: "zh",
-        name: "中文",
-      },
-    ],
-    ["en"],
-    {
-      fetchImpl: async (url, options) => {
-        requestedUrl = new URL(url);
-        requestedOptions = options;
-        return {
-          ok: true,
-          async json() {
-            return {
-              events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: "Local" }] }],
-            };
-          },
-        };
-      },
-    },
+        name: "English",
+      }],
+      ["en"],
+      { localCaptionSource: { tracks: [] } },
+    ),
+    (error) => error?.code === "NO_SUBTITLE" && /没有捕获/.test(error.message),
   );
-  assert.equal(requestedUrl.searchParams.get("fmt"), "json3");
-  assert.deepEqual(requestedOptions, { credentials: "include" });
-  assert.equal(result.transcript[0].text, "Local");
-  assert.equal(result.languageLabel, "English (auto-generated)");
-  assert.equal(result.isAi, true);
-  assert.deepEqual(result.availableLanguages, ["en", "zh"]);
 });
 
 test("选中本地获取时只调用本地字幕", async () => {
@@ -223,20 +173,20 @@ test("选中本地获取时只调用本地字幕", async () => {
         languageCode: "en",
         name: "English",
       }],
+      localCaptionSource: {
+        body: JSON.stringify({
+          events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: "Local" }] }],
+        }),
+      },
       fetchImpl: async (url) => {
         calls.push(url);
-        assert.match(url, /youtube\.com\/api\/timedtext/);
-        return {
-          ok: true,
-          async json() {
-            return { events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: "Local" }] }] };
-          },
-        };
+        throw new Error(`本地模式不应请求第三方服务：${url}`);
       },
     },
   );
   assert.equal(result.providerId, "local");
-  assert.equal(calls.length, 1);
+  assert.equal(result.transcript[0].text, "Local");
+  assert.equal(calls.length, 0);
 });
 
 test("字幕请求强制 native 模式并只发送规范 URL", async () => {

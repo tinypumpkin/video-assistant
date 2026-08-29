@@ -176,8 +176,6 @@ var BILI_SETTINGS = (() => {
         "Returns YouTube captions with timestamps and supports language-priority selection.",
     },
   ]);
-  const MAX_YOUTUBE_CAPTION_PROVIDERS = 1;
-
   // 并发上限压在 8：再高容易撞限流；超时上限 10 分钟是为了照顾本地推理。
   const LIMITS = Object.freeze({
     concurrency: Object.freeze({ min: 1, max: 8, default: 3 }),
@@ -605,7 +603,6 @@ var BILI_SETTINGS = (() => {
     DEFAULTS,
     APP_DEFAULTS,
     YOUTUBE_CAPTION_PROVIDERS,
-    MAX_YOUTUBE_CAPTION_PROVIDERS,
     DEFAULT_OVERVIEW_PROMPTS,
     DEFAULT_NOTE_PROMPTS,
     NOTE_STYLE_KEYS,

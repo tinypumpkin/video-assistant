@@ -17,6 +17,7 @@ const DEBUG = false;
 // 两站共用的按钮 UI 库（manifest 里 content-shared.js 排在本文件之前注入，
 // 同一 isolated world，这里直接取 globalThis）。
 const UI = globalThis.VideoAssistantUI;
+const CONTENT_SCRIPT_VERSION = chrome.runtime.getManifest?.().version || "test";
 
 const debugLog = (...args) => {
   if (DEBUG) console.log(...args);
@@ -177,6 +178,11 @@ if (document.readyState === "loading") {
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   debugLog("[YouTube Digest Content] Received message:", message.action, message);
+
+  if (message.action === "videoAssistantContentScriptPing") {
+    sendResponse({ success: true, site: "youtube", version: CONTENT_SCRIPT_VERSION });
+    return false;
+  }
 
   if (message.action === "siteScopeChanged") {
     siteEnabled = message.youtubeEnabled !== false;
@@ -339,6 +345,7 @@ function setDigestButtonPlacement(digestButton, { floating }) {
 function createDigestButton() {
   const digestButton = document.createElement("button");
   digestButton.id = "ytd-digest-button";
+  digestButton.setAttribute("data-video-assistant-version", CONTENT_SCRIPT_VERSION);
   digestButton.type = "button";
   digestButton.setAttribute("aria-label", "Open Video Assistant");
   digestButton.title = "Open Video Assistant";
@@ -534,6 +541,7 @@ function injectNoteButton() {
   // 逐节点构建（Trusted Types 安全），反馈只换 label 文字、图标不动。
   const noteButton = document.createElement("button");
   noteButton.id = "ytd-note-button";
+  noteButton.setAttribute("data-video-assistant-version", CONTENT_SCRIPT_VERSION);
   noteButton.type = "button";
   noteButton.title = UI.uiCopy("noteTitleNoShot");
   noteButton.append(UI.noteIcon(), UI.noteLabel(UI.uiCopy("noteLabel"), NOTE_LABEL_CLASS));

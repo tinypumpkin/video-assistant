@@ -16,6 +16,7 @@
 
   // 两站共用的按钮 UI 库（manifest 里 content-shared.js 排在本文件之前注入）。
   const UI = globalThis.VideoAssistantUI;
+  const CONTENT_SCRIPT_VERSION = chrome.runtime.getManifest?.().version || "test";
 
   const DEBUG = false;
   const debugLog = (...args) => {
@@ -175,10 +176,14 @@
 
   function injectDigestButton() {
     const existing = document.getElementById(DIGEST_BUTTON_ID);
-    if (existing?.isConnected) return;
+    if (existing?.isConnected) {
+      if (existing.getAttribute?.("data-video-assistant-version") === CONTENT_SCRIPT_VERSION) return;
+      existing.remove();
+    }
 
     const button = document.createElement("button");
     button.id = DIGEST_BUTTON_ID;
+    button.setAttribute("data-video-assistant-version", CONTENT_SCRIPT_VERSION);
     button.type = "button";
     button.title = UI.uiCopy("openSidePanel");
     // 图标即按钮：svg 填满整个按钮，不再放文字位。
@@ -207,13 +212,17 @@
 
   function injectNoteButton() {
     const existing = document.getElementById(NOTE_BUTTON_ID);
-    if (existing?.isConnected) return;
+    if (existing?.isConnected) {
+      if (existing.getAttribute?.("data-video-assistant-version") === CONTENT_SCRIPT_VERSION) return;
+      existing.remove();
+    }
 
     const overlay = ensureOverlay();
     if (!overlay) return;
 
     const button = document.createElement("button");
     button.id = NOTE_BUTTON_ID;
+    button.setAttribute("data-video-assistant-version", CONTENT_SCRIPT_VERSION);
     button.type = "button";
     button.title = UI.uiCopy("noteTitle");
     // 图标 + 文案。文案单独一个 span：保存反馈只换这里的字，图标留在原处。
@@ -322,6 +331,11 @@
   // ============================================================
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.action === "videoAssistantContentScriptPing") {
+      sendResponse({ success: true, site: "bilibili", version: CONTENT_SCRIPT_VERSION });
+      return false;
+    }
+
     if (message?.action === "uiLanguageChanged") {
       // options 切语言后 background 转发来的：刷新共享库语言 + 已注入的按钮。
       UI.setUiLanguage(message.uiLanguage);

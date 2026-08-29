@@ -54,6 +54,32 @@ test("侧边栏 per-tab：按标签页 URL 启用，图标点击使用浏览器�
   assert.doesNotMatch(source, /action\.onClicked\.addListener/);
 });
 
+test("扩展更新和跨标签页切换会恢复内容脚本，并在打开前配置目标侧栏", () => {
+  const background = readText("background.js");
+  const youtube = readText("content-youtube.js");
+  const bilibili = readText("content-bilibili.js");
+
+  assert.match(background, /function ensureContentScriptForTab\(/);
+  assert.match(background, /videoAssistantContentScriptPing/);
+  assert.match(background, /files:\s*\[[\s\S]{0,120}"content-shared\.js"/);
+  assert.match(background, /tabs\.onActivated\.addListener/);
+  assert.match(background, /changeInfo\.status !== "complete"/);
+  for (const source of [youtube, bilibili]) {
+    assert.match(source, /videoAssistantContentScriptPing/);
+    assert.match(source, /CONTENT_SCRIPT_VERSION/);
+  }
+
+  const openHandler = background.slice(
+    background.indexOf("async function handleOpenSidePanel"),
+    background.indexOf("chrome.runtime.onMessage.addListener"),
+  );
+  assert.ok(
+    openHandler.indexOf("chrome.sidePanel.setOptions") < openHandler.indexOf("chrome.sidePanel.open"),
+    "目标 tab 的侧栏配置必须先于 open 发起",
+  );
+  assert.match(openHandler, /Promise\.all\(\[configuring, opening\]\)/);
+});
+
 test("侧栏冷启动立即显示静态骨架，重型 Mermaid 按需加载", () => {
   const html = readText("sidepanel.html");
   const sidepanel = readText("sidepanel.js");
@@ -135,9 +161,8 @@ test("YouTube 本地字幕在当前页面 MAIN world 请求，并支持单选字
   assert.match(source, /timedtext-hook/);
   assert.match(source, /loadModule\("captions"\)/);
   assert.match(source, /unloadModule\("captions"\)/);
-  // 已移除的备用路径不得回潮：直连 timedtext 会因 pot 校验返回空壳，
-  // youtubei/get_transcript 依赖页面数据且常被拒。
-  assert.doesNotMatch(source, /api\/timedtext.*toString\(\)|youtubei\/v1\/get_transcript/);
+  // 后台不得再次直连字幕 URL；正文只能来自播放器自己的请求。
+  assert.doesNotMatch(source, /api\/timedtext.*toString\(\)/);
 });
 
 test("HTML 引用的脚本与样式都存在", () => {
