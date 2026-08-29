@@ -1,6 +1,6 @@
 {
   "name": "video-assistant",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "description": "Turn YouTube and Bilibili videos into transcripts, bilingual learning resources, AI overviews, explanations, and timestamped notes.",
   "license": "MIT",

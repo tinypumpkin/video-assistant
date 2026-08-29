@@ -15,7 +15,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Manifest-V3-blue" alt="Manifest V3">
-  <img src="https://img.shields.io/badge/version-1.0.5-green" alt="v1.0.5">
+  <img src="https://img.shields.io/badge/version-1.0.6-green" alt="v1.0.6">
   <img src="https://img.shields.io/badge/i18n-zh--CN%20%7C%20en--US-orange" alt="i18n">
   <img src="https://img.shields.io/badge/platform-YouTube%20%7C%20Bilibili-ff6b6b" alt="platform">
 </p>
