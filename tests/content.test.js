@@ -576,14 +576,27 @@ test("笔记按钮带图标，文案单独放一个 span", async () => {
   assert.ok(button.querySelector(".bili-digest-note-label"));
 });
 
-test("点手记按钮发 saveMemo：带时间戳，截图失败不挡保存", async () => {
+test("点手记按钮发 saveMemo，并弹出包含时间信息与复制链接的保存卡片", async () => {
   const dom = createDom();
   dom.register(".video-toolbar-left");
   const player = dom.register("#bilibili-player");
+  const title = dom.register("h1.video-title");
+  title.textContent = "B站测试视频";
+  dom.document.body = dom.makeElement("body");
+  dom.document.head = dom.makeElement("head");
   const sent = [];
   const sendMessage = (message) => {
     sent.push(message);
-    return Promise.resolve({ success: true });
+    if (message.action !== "saveMemo") return Promise.resolve({ success: true });
+    return Promise.resolve({
+      success: true,
+      memo: {
+        timestamp: "05:23",
+        videoTitle: "B站测试视频",
+        text: "字幕上下文",
+        timestampedUrl: "https://www.bilibili.com/video/BV1xx411c7mD?t=323",
+      },
+    });
   };
 
   await run({ dom, sendMessage });
@@ -596,11 +609,21 @@ test("点手记按钮发 saveMemo：带时间戳，截图失败不挡保存", as
   assert.ok(save, "快捷键手记走 saveMemo 而不是 saveNote");
   assert.equal(save.kind, "memo");
   assert.equal(save.timestamp, 323);
+  assert.equal(save.videoTitle, "B站测试视频");
   // mock 环境没有 canvas，截图返回 null —— 手记仍应保存，且带文字兜底而不是裸 null 图。
   assert.equal(save.imageDataUrl, undefined);
   assert.match(save.text, /视频截图失败/);
   const legacy = sent.find((message) => message.action === "saveNote");
   assert.equal(legacy, undefined, "不再走旧的 saveNote 链路");
+
+  const toast = dom.document.getElementById("bili-note-toast");
+  assert.ok(toast, "保存成功后应在 Bilibili 页面右下角弹出卡片");
+  assert.equal(toast.children[0].textContent, "📝 手记已保存");
+  assert.equal(toast.children[1].textContent, "05:23 — B站测试视频");
+  assert.equal(toast.children[2].textContent, '"字幕上下文"');
+  const copyLink = toast.children[3].children[0];
+  assert.equal(copyLink.textContent, "🔗 复制链接");
+  assert.equal(copyLink.href, "https://www.bilibili.com/video/BV1xx411c7mD?t=323");
 });
 
 test("按钮被重渲染删掉后，定时自查会补回来", async () => {

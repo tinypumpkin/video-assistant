@@ -244,6 +244,20 @@ test("视频问答长字幕不会只截开头，会保留相关段和结尾", ()
   assert.ok(context.length <= 2_000);
 });
 
+test("长字幕压缩时强制保留视觉手记时间点附近字幕", () => {
+  const segments = Array.from({ length: 400 }, (_, index) => ({
+    start: index * 5,
+    text: `普通字幕 ${index} ${"内容".repeat(12)}`,
+  }));
+  const context = AI.buildChatTranscriptContext(segments, "生成笔记", {
+    maxChars: 2_000,
+    pinnedTimestamps: [1235],
+    pinnedWindowSeconds: 10,
+  });
+  assert.match(context, /\[20:35\] 普通字幕 247/);
+  assert.ok(context.length <= 2_000);
+});
+
 test("多轮问答历史只接受 user/assistant 并限制总量", () => {
   const history = AI.normalizeChatHistory(
     [

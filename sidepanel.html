@@ -388,14 +388,13 @@
             <label><input id="chatContextOverview" type="checkbox" checked />关联概述</label>
             <label><input id="chatContextNotes" type="checkbox" checked />关联 AI 笔记</label>
             <label><input id="chatContextMemos" type="checkbox" checked />关联手记</label>
-            <label><input id="chatContextAiRecords" type="checkbox" checked />关联 AI 记</label>
           </div>
         </details>
         <button id="clearChatBtn" class="ghost-btn" type="button">清空对话</button>
       </div>
       <div id="chatEmpty" class="chat-empty">
         <p class="state-title">想问 AI 什么？</p>
-        <p class="state-text">选择字幕、概述、AI 笔记、手记或 AI 记作为当前视频的上下文。</p>
+        <p class="state-text">选择字幕、概述、AI 笔记或手记作为当前视频的上下文。</p>
       </div>
       <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
       <form id="chatForm" class="chat-composer chat-sticky">
@@ -436,6 +435,7 @@
   <script defer src="lib/ai.js"></script>
   <script defer src="lib/concurrency.js"></script>
   <script defer src="lib/markdown.js"></script>
+  <script defer src="lib/visual-memos.js"></script>
   <script defer src="lib/mermaid-widget.js"></script>
   <script defer src="lib/note-mindmap.js"></script>
   <script defer src="prompts/note-styles.js"></script>

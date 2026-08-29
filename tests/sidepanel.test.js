@@ -143,7 +143,6 @@ function createContext({
     "chatContextOverview",
     "chatContextNotes",
     "chatContextMemos",
-    "chatContextAiRecords",
   ]) {
     byId(id).checked = true;
   }
@@ -266,6 +265,7 @@ function createContext({
     BILI_AI: require("../lib/ai.js"),
     BILI_CONCURRENCY: require("../lib/concurrency.js"),
     BILI_MARKDOWN: require("../lib/markdown.js"),
+    BILI_VISUAL_MEMOS: require("../lib/visual-memos.js"),
     NOTE_MINDMAP: require("../lib/note-mindmap.js"),
     BILI_NOTE_TEMPLATES: require("../prompts/note-styles.js"),
     BILI_SETTINGS: require("../settings.js"),
@@ -277,7 +277,7 @@ function createContext({
   // 所以在末尾追加一行，从同一个词法作用域里把要测的绑定递出来。
   const source = fs.readFileSync(path.join(ROOT, "sidepanel.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { state, uiText, parseVideoRef, activeTab, syncWithActiveTab, loadTranscript, analyze, renderSegments, renderAnalysis, segmentDisplayText, noteTextForSegment, saveTextAsVideoNote, paintSegmentText, setTranscriptMode, selectionContext, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, renderMemoCard, renderAiVideoNoteDocument, copyCurrentAiVideoNote, copyMemoToClipboard, startAiVideoNoteEdit, cancelAiVideoNoteEdit, saveAiVideoNoteEdit, deleteCurrentAiVideoNote, resetCurrentAiVideoNote, exportNotesFromSelect, notesAsMarkdown, notesAsCsv, playNote, saveMemo, currentMemoVideoContext, submitChatQuestion, saveChatAsNote, renderChat, appendChatDelta, flushTypewriter, displayedChatText, switchTab, renderOverviewPrompt, resetOverviewPrompt, renderNotePrompt, resetNotePrompt, renderNoteStyleSelector, updateNoteStyle, selectedNotePrompt, generateVideoNote, renderNotes, renderMemos, loadNotes, chatContextSelection, setNotesView, renderNotesMindmap };`,
+    `${source}\n;globalThis.__api = { state, uiText, parseVideoRef, activeTab, syncWithActiveTab, loadTranscript, analyze, renderSegments, renderAnalysis, segmentDisplayText, noteTextForSegment, saveTextAsVideoNote, paintSegmentText, setTranscriptMode, selectionContext, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, renderMemoCard, renderAiVideoNoteDocument, renderMarkdownWithVisualReferences, copyCurrentAiVideoNote, copyMemoToClipboard, startAiVideoNoteEdit, cancelAiVideoNoteEdit, saveAiVideoNoteEdit, deleteCurrentAiVideoNote, resetCurrentAiVideoNote, exportNotesFromSelect, notesAsMarkdown, notesAsCsv, playNote, saveMemo, currentMemoVideoContext, submitChatQuestion, saveChatAsNote, renderChat, appendChatDelta, flushTypewriter, displayedChatText, switchTab, renderOverviewPrompt, resetOverviewPrompt, renderNotePrompt, resetNotePrompt, renderNoteStyleSelector, updateNoteStyle, selectedNotePrompt, generateVideoNote, renderNotes, renderMemos, loadNotes, chatContextSelection, setNotesScope, setNotesView, renderNotesMindmap };`,
     context,
   );
 
@@ -1207,7 +1207,7 @@ test("打字机直接锚定流式文本节点，增量到达时即渲染 Markdow
   assert.ok(!final.streaming, "streaming 标志已清除");
 });
 
-test("问 AI 默认关联当前视频的五类上下文", async () => {
+test("问 AI 默认关联当前视频的四类上下文且不引用 AI 记", async () => {
   const ctx = createContext({ transcript: transcriptResult() });
   ctx.state.site = "bilibili";
   ctx.state.bvid = "BV1xx411c7mD";
@@ -1218,7 +1218,6 @@ test("问 AI 默认关联当前视频的五类上下文", async () => {
     overview: true,
     notes: true,
     memos: true,
-    aiRecords: true,
   });
   streamAnswer(ctx.ports.at(-1), "好的");
 
@@ -1226,7 +1225,6 @@ test("问 AI 默认关联当前视频的五类上下文", async () => {
   ctx.el("chatContextOverview").checked = false;
   ctx.el("chatContextNotes").checked = false;
   ctx.el("chatContextMemos").checked = false;
-  ctx.el("chatContextAiRecords").checked = false;
   await ctx.submitChatQuestion("纯问答");
   const asks = ctx.ports.map((entry) => entry.sent[0]);
   assert.deepEqual(JSON.parse(JSON.stringify(asks.at(-1).contextSelection)), {
@@ -1234,7 +1232,6 @@ test("问 AI 默认关联当前视频的五类上下文", async () => {
     overview: false,
     notes: false,
     memos: false,
-    aiRecords: false,
   });
   streamAnswer(ctx.ports.at(-1), "好的");
 });
@@ -1559,6 +1556,44 @@ test("生成后的 AI 视频笔记使用文档预览并显示双视图切换", (
   }
 });
 
+test("AI 视频笔记在 Markdown 中把引用标记渲染成手记截图", () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.notesScope = "video";
+  const note = {
+    id: "ai-doc-with-image",
+    kind: "ai_video_note",
+    text: "# 教程笔记\n\n截图说明如下：\n\n{{va-cite:cite_01}}\n\n## 后续章节\n正文",
+    visualReferences: [{
+      citationId: "cite_01",
+      imageDataUrl: "data:image/jpeg;base64,QUJD",
+      timestamp: "1:20",
+      timestampedUrl: "https://www.youtube.com/watch?v=abc&t=80",
+    }],
+  };
+
+  ctx.renderNotes([note], 1);
+
+  const article = ctx.el("notesList").children[0];
+  const body = article.children[0];
+  const findByClass = (node, className) => {
+    if (String(node?.className || "").split(/\s+/).includes(className)) return node;
+    for (const child of node?.children || []) {
+      const found = findByClass(child, className);
+      if (found) return found;
+    }
+    return null;
+  };
+  const figure = findByClass(body, "ai-note-visual-reference");
+  assert.ok(figure, "引用位置应插入图片组件");
+  assert.equal(figure.children[0].src, "data:image/jpeg;base64,QUJD");
+  assert.match(figure.children[1].children[0].textContent, /1:20/);
+  const collectText = (node) => [
+    typeof node?.textContent === "string" ? node.textContent : "",
+    ...(node?.children || []).flatMap(collectText),
+  ].join(" ");
+  assert.doesNotMatch(collectText(body), /va-cite/);
+});
+
 test("AI 笔记功能栏的复制与删除操作指向当前生成文档", async () => {
   const ctx = createContext({ transcript: transcriptResult() });
   const note = { id: "ai-doc-2", kind: "ai_video_note", text: "# 测试笔记" };
@@ -1729,6 +1764,18 @@ test("仅 AI 视频笔记可切换导图视图，切回 Markdown 恢复文档", 
   assert.equal(ctx.el("notesMindmapPanel").hidden, true);
   assert.equal(ctx.el("notesEntries").hidden, false); // video 范围恢复列表
   assert.equal(ctx.el("aiNoteDocumentBtn").getAttribute("aria-pressed"), "true");
+});
+
+test("从会隐藏正文的范围切回本视频时恢复 Markdown 容器", () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.notesScope = "memo";
+  ctx.el("notesEntries").hidden = true;
+
+  ctx.setNotesScope("video");
+
+  assert.equal(ctx.state.notesScope, "video");
+  assert.equal(ctx.state.notesView, "list");
+  assert.equal(ctx.el("notesEntries").hidden, false);
 });
 
 test("离开本视频范围会退出导图，手记和 AI 记不提供导图", () => {

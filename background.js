@@ -12,6 +12,7 @@ importScripts(
   "lib/cache.js",
   "lib/ai.js",
   "lib/ai-provider.js",
+  "lib/visual-memos.js",
   "lib/provider-router.js",
   "lib/concurrency.js",
 );
@@ -89,8 +90,9 @@ async function ensureContentScriptForTab(tab) {
       func: (targetSite) => {
         const ids = targetSite === "youtube"
           ? ["ytd-digest-button", "ytd-note-button", "ytd-note-toast"]
-          : ["bili-digest-button", "bili-digest-note-button", "bili-digest-overlay"];
+          : ["bili-digest-button", "bili-digest-note-button", "bili-digest-overlay", "bili-note-toast"];
         for (const id of ids) document.getElementById(id)?.remove();
+        document.getElementById("bili-note-toast-style")?.remove();
       },
     });
     await chrome.scripting.executeScript({
@@ -979,6 +981,8 @@ async function ensureHostPermission(baseUrl) {
 async function requestAiCompletion({
   messages,
   images = [],
+  visionMessages = messages,
+  visualReferences = [],
   maxTokens,
   temperature,
   responseFormat,
@@ -1003,14 +1007,16 @@ async function requestAiCompletion({
 
   for (const [index, provider] of providers.entries()) {
     try {
+      const usesVisualReferences = provider.settings.supportsVision === true && visualReferences.length > 0;
       const result = await requestProviderCompletion(provider.settings, {
-        messages,
-        images,
+        messages: usesVisualReferences ? visionMessages : messages,
+        images: usesVisualReferences ? [] : images,
+        visualReferences: usesVisualReferences ? visualReferences : [],
         maxTokens,
         temperature,
         responseFormat,
       });
-      return { ...result, providerRole: provider.role };
+      return { ...result, providerRole: provider.role, usedVisualReferences: usesVisualReferences };
     } catch (error) {
       failures.push({ provider, error });
       if (!VIDEO_PROVIDER_ROUTER.shouldFailOver(error)) throw error;
@@ -1033,7 +1039,7 @@ async function requestAiCompletion({
 // 单个 Provider 内部仍保留空响应的自愈重试；用尽后才交给有序回退路由判断。
 async function requestProviderCompletion(
   settings,
-  { messages, images, maxTokens, temperature, responseFormat },
+  { messages, images, visualReferences = [], maxTokens, temperature, responseFormat },
 ) {
   const check = BILI_SETTINGS.validate(settings);
   if (!check.ok) {
@@ -1047,7 +1053,9 @@ async function requestProviderCompletion(
   let tokens = maxTokens;
   let diagnosis = null;
   const providerMessages = settings.supportsVision
-    ? BILI_AI_PROVIDER.attachImagesToLastUserMessage(settings.protocol, messages, images)
+    ? (visualReferences.length
+        ? BILI_AI_PROVIDER.attachVisualReferencesToLastUserMessage(settings.protocol, messages, visualReferences)
+        : BILI_AI_PROVIDER.attachImagesToLastUserMessage(settings.protocol, messages, images))
     : messages;
 
   // 空响应有两种能自愈的成因，各给一次机会，所以最多三轮。
@@ -1676,6 +1684,8 @@ async function handleGenerateVideoNote(
       String(customPrompt || "").trim() ||
       BILI_SETTINGS.DEFAULT_NOTE_PROMPTS[noteLanguage]
     ).slice(0, 5000);
+    const hasVisionProvider = BILI_SETTINGS.activeProviders(settings)
+      .some((provider) => provider.settings?.supportsVision === true);
     const transcriptContext = BILI_AI.buildChatTranscriptContext(
       transcript.segments,
       notePrompt,
@@ -1685,6 +1695,20 @@ async function handleGenerateVideoNote(
       return { success: false, error: "NO_TRANSCRIPT", message: "没有可用的字幕。" };
     }
 
+    const visualMemoReferences = hasVisionProvider
+      ? await prepareVisualMemoReferences(await readNotes(), resource)
+      : [];
+    const citationCandidates = visualMemoReferences.map((reference, index) => ({
+      ...reference,
+      citationId: `cite_${String(index + 1).padStart(2, "0")}`,
+    }));
+    const visionTranscriptContext = citationCandidates.length
+      ? BILI_AI.buildChatTranscriptContext(transcript.segments, notePrompt, {
+          maxChars: 32_000,
+          pinnedTimestamps: citationCandidates.map((reference) => reference.timestampSeconds),
+          pinnedWindowSeconds: 15,
+        })
+      : transcriptContext;
     const variables = {
       videoTitle: transcript.videoInfo?.title || resource.videoId,
       ownerName: transcript.videoInfo?.owner || "未知",
@@ -1694,15 +1718,33 @@ async function handleGenerateVideoNote(
       customInstructions: notePrompt,
       transcriptContext,
     };
-    const [systemPrompt, userPrompt] = await Promise.all([
+    const [systemPrompt, visionSystemPrompt, userPrompt, visionUserPrompt] = await Promise.all([
       loadPromptSection("note-generation.md", "系统提示词", variables),
+      loadPromptSection("note-generation.md", "视觉增强系统提示词", variables),
       loadPromptSection("note-generation.md", "用户提示词", variables),
+      loadPromptSection("note-generation.md", "用户提示词", {
+        ...variables,
+        transcriptContext: visionTranscriptContext,
+      }),
     ]);
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ];
+    const visualReferences = citationCandidates.map((reference) => ({
+      noteId: reference.noteId,
+      dataUrl: reference.dataUrl,
+      label: noteLanguage === "en"
+        ? `[Memo screenshot #${reference.citationId} | ${BILI_TRANSCRIPT.formatTimestamp(reference.timestampSeconds)}]`
+        : `[手记截图 #${reference.citationId}｜${BILI_TRANSCRIPT.formatTimestamp(reference.timestampSeconds)}]`,
+    }));
     const completion = await requestAiCompletion({
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
+      messages,
+      visionMessages: [
+        { role: "system", content: `${systemPrompt}\n\n${visionSystemPrompt}` },
+        { role: "user", content: visionUserPrompt },
       ],
+      visualReferences,
       maxTokens: BILI_AI.estimateOutputTokens(transcriptContext.length, {
         ratio: 0.18,
         floor: 1800,
@@ -1710,17 +1752,33 @@ async function handleGenerateVideoNote(
       }),
       temperature: 0.2,
     });
-    const text = String(completion.text || "")
+    const generatedText = String(completion.text || "")
       .trim()
       .replace(/^```(?:markdown|md)?\s*\n?/i, "")
       .replace(/\n?```\s*$/i, "")
       .trim()
       .slice(0, 12_000);
-    if (!text) {
+    if (!generatedText) {
       return { success: false, error: "EMPTY_AI_NOTE", message: "模型没有生成笔记内容，请重试。" };
     }
 
     const now = Date.now();
+    const allowedCitationIds = citationCandidates.map((reference) => reference.citationId);
+    // 只有实际走视觉请求时才允许模型留下截图引用标记。纯文本模型偶尔也会
+    // 模仿提示词输出占位符，必须在入库前剔除，避免侧栏展示原始标记。
+    const text = BILI_VISUAL_MEMOS.sanitizeCitationMarkers(
+      generatedText,
+      completion.usedVisualReferences ? allowedCitationIds : [],
+    );
+    const usedCitationIds = BILI_VISUAL_MEMOS.parseCitationIds(text);
+    const savedVisualReferences = usedCitationIds.map((citationId) => {
+      const reference = citationCandidates.find((item) => item.citationId === citationId);
+      return {
+        citationId,
+        sourceNoteId: reference?.noteId || null,
+        timestampSeconds: Math.max(0, Number(reference?.timestampSeconds) || 0),
+      };
+    });
     const note = {
       id: `note_${now}_${Math.random().toString(36).slice(2, 8)}`,
       kind: "ai_video_note",
@@ -1736,6 +1794,12 @@ async function handleGenerateVideoNote(
       text,
       notePrompt,
       noteStyle: normalizedNoteStyle,
+      ...(savedVisualReferences.length
+        ? {
+            visualMemoReferenceCount: savedVisualReferences.length,
+            visualMemoReferences: savedVisualReferences,
+          }
+        : {}),
       createdAt: now,
       pending: false,
     };
@@ -1749,6 +1813,41 @@ async function handleGenerateVideoNote(
     console.error("[Video Assistant] AI 笔记生成失败：", error);
     return aiErrorResponse(error);
   }
+}
+
+async function analyzeStoredMemoImage(dataUrl) {
+  if (typeof createImageBitmap !== "function" || typeof OffscreenCanvas !== "function") return null;
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    const bitmap = await createImageBitmap(blob);
+    const canvas = new OffscreenCanvas(96, 54);
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    context.drawImage(bitmap, 0, 0, 96, 54);
+    bitmap.close?.();
+    return BILI_VISUAL_MEMOS.analyzeImagePixels(
+      context.getImageData(0, 0, 96, 54).data,
+      96,
+      54,
+    );
+  } catch (error) {
+    debugLog("[Video Assistant] 旧手记截图分析失败：", error);
+    return null;
+  }
+}
+
+/** 旧版本保存的截图没有 imageMeta；生成时最多补算 12 张，避免升级后旧手记失效。 */
+async function prepareVisualMemoReferences(notes, resource) {
+  const list = Array.isArray(notes) ? notes : [];
+  const legacy = list.filter((note) =>
+    note?.kind === "memo" && note.site === resource.site &&
+    String(note.bvid || note.videoId) === String(resource.videoId) &&
+    Number(note.page || 1) === Number(resource.page || 1) &&
+    typeof note.imageDataUrl === "string" && !note.imageMeta).slice(0, 12);
+  await Promise.all(legacy.map(async (note) => {
+    const meta = await analyzeStoredMemoImage(note.imageDataUrl);
+    if (meta) note.imageMeta = meta;
+  }));
+  return BILI_VISUAL_MEMOS.selectReferences(list, resource);
 }
 
 // 时长相关变量按本块区间算，好让模型只覆盖这一段。
@@ -1973,14 +2072,13 @@ function analysisAsChatContext(analysis) {
 function normalizeChatContextSelection(selection) {
   // 兼容已有侧边栏：它们尚未发送该字段时，沿用原来的「全关联」行为。
   if (!selection || typeof selection !== "object") {
-    return { transcript: true, overview: true, notes: true, memos: true, aiRecords: true };
+    return { transcript: true, overview: true, notes: true, memos: true };
   }
   return {
     transcript: selection.transcript === true,
     overview: selection.overview === true,
     notes: selection.notes === true,
     memos: selection.memos === true,
-    aiRecords: selection.aiRecords === true,
   };
 }
 
@@ -2038,26 +2136,8 @@ function memosAsChatContext(notes, resource) {
   return { text, images };
 }
 
-function aiRecordsAsChatContext(notes, resource) {
-  if (!resource) return "（当前没有关联视频，未附加 AI 记）";
-  const content = notes
-    .filter(
-      (note) =>
-        (note.site || "bilibili") === resource.site &&
-        note.bvid === resource.videoId &&
-        (note.kind === "ai_note" || note.kind === "ai_chat") &&
-        typeof note.text === "string" &&
-        note.text.trim(),
-    )
-    .slice(0, 20)
-    .map((note) => note.text.trim().slice(0, 2_000))
-    .join("\n\n")
-    .slice(0, 8_000);
-  return content || "（当前视频还没有 AI 记）";
-}
-
 /**
- * 组装「问 AI」的提示词上下文：字幕缓存、视频信息、笔记、概览全部收在这里。
+ * 组装「问 AI」的提示词上下文：字幕缓存、视频信息、AI 笔记、手记和概览全部收在这里。
  * 非流式 handleAskVideo 与流式 handleAskVideoStream 共用，保证两种通道的行为一致。
  */
 async function assembleAskContext({
@@ -2123,9 +2203,8 @@ async function assembleAskContext({
 
   let notesContext = "（用户未选择关联 AI 笔记）";
   let memosContext = "（用户未选择关联手记）";
-  let aiRecordsContext = "（用户未选择关联 AI 记）";
   let memoImages = [];
-  if (selectedContext.notes || selectedContext.memos || selectedContext.aiRecords) {
+  if (selectedContext.notes || selectedContext.memos) {
     try {
       const savedNotes = await readNotes();
       if (selectedContext.notes) notesContext = notesAsChatContext(savedNotes, resource);
@@ -2134,14 +2213,10 @@ async function assembleAskContext({
         memosContext = memoContext.text;
         memoImages = memoContext.images;
       }
-      if (selectedContext.aiRecords) {
-        aiRecordsContext = aiRecordsAsChatContext(savedNotes, resource);
-      }
     } catch (error) {
       debugLog("[Video Assistant] 问答未读到笔记或手记，将跳过：", error);
       if (selectedContext.notes) notesContext = "（没有可用的 AI 笔记）";
       if (selectedContext.memos) memosContext = "（没有可用的手记）";
-      if (selectedContext.aiRecords) aiRecordsContext = "（没有可用的 AI 记）";
     }
   }
 
@@ -2169,7 +2244,6 @@ async function assembleAskContext({
         : "（用户未选择关联字幕）",
     notesContext,
     memosContext,
-    aiRecordsContext,
     question: userQuestion,
   };
   const [systemPrompt, userPrompt] = await Promise.all([
@@ -2559,7 +2633,7 @@ async function handleGetNotes(videoIdInput, site = "bilibili", scope = "video", 
   if (scope === "all") {
     return {
       success: true,
-      ...pageNotes(notes, page),
+      ...pageNotes(notes.map((note) => hydrateAiNoteVisualReferences(note, notes)), page),
     };
   }
   const regularNotes = notes.filter(
@@ -2575,8 +2649,32 @@ async function handleGetNotes(videoIdInput, site = "bilibili", scope = "video", 
     : regularNotes;
   return {
     success: true,
-    ...pageNotes(selectedNotes, page),
+    ...pageNotes(
+      selectedNotes.map((note) => hydrateAiNoteVisualReferences(note, notes)),
+      page,
+    ),
   };
+}
+
+function hydrateAiNoteVisualReferences(note, allNotes) {
+  if (note?.kind !== "ai_video_note") return note;
+  const resource = resolveVideo(
+    note.site || "bilibili",
+    note.bvid || note.videoId,
+    note.page || 1,
+  );
+  if (!resource) return note;
+  const references = BILI_VISUAL_MEMOS.resolveCitations(
+    allNotes,
+    resource,
+    note.visualMemoReferences,
+    note.text,
+  ).map((reference) => ({
+    ...reference,
+    timestamp: BILI_TRANSCRIPT.formatTimestamp(reference.timestampSeconds),
+    timestampedUrl: canonicalVideoUrl(resource, reference.timestampSeconds),
+  }));
+  return references.length ? { ...note, visualReferences: references } : note;
 }
 
 async function handleSaveMemo({
@@ -2588,6 +2686,7 @@ async function handleSaveMemo({
   videoTitle,
   timestamp,
   imageDataUrl,
+  imageMeta,
 }) {
   let memoText = String(text || "").trim().slice(0, 10_000);
   // 纯截图无字幕的手记允许保存（正文为空），但纯空手记仍拒绝。
@@ -2615,6 +2714,8 @@ async function handleSaveMemo({
   if (hasImage) {
     // 存储走 chrome.storage.local 的 7MB 安全线，一条 840px JPEG 截图约几十 KB。
     memo.imageDataUrl = imageDataUrl.slice(0, 512_000);
+    const safeImageMeta = BILI_VISUAL_MEMOS.sanitizeImageMeta(imageMeta);
+    if (safeImageMeta) memo.imageMeta = safeImageMeta;
   }
   const resource = videoIdInput ? resolveVideo(site, videoIdInput, page) : null;
   if (resource) {

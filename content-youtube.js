@@ -57,6 +57,16 @@ const CONTROLS_HEALTH_CHECK_MS = 1500;
  * We wait a bit for YouTube's UI to fully render.
  */
 async function init() {
+  // 孤儿检测（与 B 站侧同款）：扩展重载后旧 content script 的 runtime 已失效，
+  // 其定时器会继续跑并反复抛 “Extension context invalidated”、还可能 remove()
+  // 新脚本注入的按钮。探测到即退出，把页面让给新注入的脚本。
+  try {
+    chrome.runtime.getURL("");
+  } catch (error) {
+    console.debug("[Video Assistant] 扩展已重载，旧内容脚本退出。");
+    return;
+  }
+
   try {
     const scope = await chrome.runtime.sendMessage({
       action: "isSiteEnabled",
@@ -104,6 +114,15 @@ async function init() {
 function setupControlsHealthCheck() {
   if (controlsHealthTimer) return;
   controlsHealthTimer = setInterval(() => {
+    // 孤儿自停：扩展重载后旧脚本立即退出，避免反复抛 context invalidated
+    // 并与新注入的脚本互相拆台。
+    try {
+      chrome.runtime.getURL("");
+    } catch (error) {
+      clearInterval(controlsHealthTimer);
+      controlsHealthTimer = null;
+      return;
+    }
     if (!siteEnabled || !window.location.pathname.includes("/watch")) return;
     injectDigestButton();
     if (!ytdNoteButton || !ytdNoteButton.isConnected) tryInjectNoteButton();
@@ -679,6 +698,7 @@ async function doSaveCurrentNote(video) {
     // 与 B 站手记按钮同一协议：saveMemo + kind:"memo"，落库后归进侧边栏
     // 「手记」tab（此前走 saveNote 会混进「笔记」tab 的 AI 润色笔记里）。
     // 正文由 background 从当前时间点字幕上下文生成；无字幕时存空文。
+    const imageDataUrl = captureVideoFrame(video);
     const result = await chrome.runtime.sendMessage({
       action: "saveMemo",
       kind: "memo",
@@ -687,7 +707,8 @@ async function doSaveCurrentNote(video) {
       timestamp: currentTime,
       videoTitle: videoInfo.title,
       channelName: videoInfo.channelName,
-      imageDataUrl: captureVideoFrame(video),
+      imageDataUrl,
+      imageMeta: imageDataUrl ? UI.analyzeVideoFrame(video) : null,
     });
 
     if (result.success) {

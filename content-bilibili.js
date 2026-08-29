@@ -26,9 +26,13 @@
   const OVERLAY_ID = "bili-digest-overlay";
   const DIGEST_BUTTON_ID = "bili-digest-button";
   const NOTE_BUTTON_ID = "bili-digest-note-button";
+  const NOTE_TOAST_ID = "bili-note-toast";
+  const NOTE_TOAST_STYLE_ID = "bili-note-toast-style";
   const NOTE_LABEL_CLASS = "bili-digest-note-label";
   const DIGEST_HINT_CLASS = "bili-digest-hint";
   let siteEnabled = true;
+  // SPA 自查定时器句柄：孤儿退出时要能清掉它。
+  let reinjectTimer = null;
   let keyboardListenerAdded = false;
 
   // 从左到右依次尝试，命中即用。覆盖新旧两版播放页。
@@ -139,6 +143,7 @@
   function removeInjectedButtons() {
     document.getElementById(DIGEST_BUTTON_ID)?.remove();
     document.getElementById(OVERLAY_ID)?.remove();
+    document.getElementById(NOTE_TOAST_ID)?.remove();
   }
 
   // 浮动按钮共用一个纵向容器，否则 Digest 退化成浮动按钮时会和笔记按钮叠在一起。
@@ -277,6 +282,70 @@
     }
   }
 
+  /** 保存成功后显示与 YouTube 等价的右下角手记卡片。 */
+  function showNoteSavedToast(note) {
+    if (!note || !document.body) return;
+    document.getElementById(NOTE_TOAST_ID)?.remove();
+
+    const toast = document.createElement("div");
+    toast.id = NOTE_TOAST_ID;
+    toast.style.cssText = `
+      position:fixed;bottom:20px;right:20px;z-index:999999;
+      background:#fff;border:1px solid #ece5d9;border-radius:14px;
+      padding:16px 20px;max-width:350px;box-shadow:0 12px 32px rgba(50,42,32,.2);
+      font-family:system-ui,-apple-system,"Roboto",sans-serif;
+      animation:biliNoteSlideIn .3s ease;
+    `;
+
+    const title = document.createElement("div");
+    title.textContent = `📝 ${UI.uiCopy("savedToastTitle")}`;
+    title.style.cssText = "font-weight:700;margin-bottom:6px;color:#168cff;";
+
+    const meta = document.createElement("div");
+    meta.textContent = `${String(note.timestamp || "")} — ${String(note.videoTitle || "")}`;
+    meta.style.cssText = "font-size:12px;color:#6b6258;margin-bottom:8px;";
+
+    const content = document.createElement("div");
+    content.textContent = `"${String(note.text || "")}"`;
+    content.style.cssText = "font-size:13px;line-height:1.55;color:#2e2a24;";
+
+    const linkRow = document.createElement("div");
+    linkRow.style.cssText = "margin-top:10px;font-size:11px;";
+    const link = document.createElement("a");
+    link.href = String(note.timestampedUrl || "#");
+    link.textContent = `🔗 ${UI.uiCopy("copyLink")}`;
+    link.style.cssText = "color:#168cff;font-weight:600;text-decoration:none;";
+    link.addEventListener("click", async (event) => {
+      event.preventDefault();
+      try {
+        await navigator.clipboard.writeText(String(note.timestampedUrl || ""));
+        link.textContent = "✓ Copied!";
+      } catch (error) {
+        console.error("Copy failed:", error);
+      }
+    });
+    linkRow.appendChild(link);
+    toast.append(title, meta, content, linkRow);
+
+    if (document.head && !document.getElementById(NOTE_TOAST_STYLE_ID)) {
+      const style = document.createElement("style");
+      style.id = NOTE_TOAST_STYLE_ID;
+      style.textContent = `
+        @keyframes biliNoteSlideIn {
+          from { transform:translateX(100%); opacity:0; }
+          to { transform:translateX(0); opacity:1; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.animation = "biliNoteSlideIn .3s ease reverse";
+      setTimeout(() => toast.remove(), 300);
+    }, 5000);
+  }
+
   async function saveNoteAtCurrentTime() {
     const video = videoElement();
     const bvid = currentBvid();
@@ -288,6 +357,7 @@
     // 截图可能因新播放器还没解码出帧 / canvas 被跨源污染而失败（SPA 切视频后
     // 的典型时间窗）。此时至少把手记时间点以文字落库，别让 N 键白按。
     const shot = captureVideoFrame(video);
+    const videoInfo = readVideoInfo();
     try {
       const result = await chrome.runtime.sendMessage({
         action: "saveMemo",
@@ -296,12 +366,14 @@
         bvid,
         page: currentPage(),
         timestamp: Math.floor(video.currentTime || 0),
+        videoTitle: videoInfo.title,
         ...(shot
-          ? { imageDataUrl: shot }
+          ? { imageDataUrl: shot, imageMeta: UI.analyzeVideoFrame(video) }
           : { text: `（视频截图失败，记录于 ${Math.floor(video.currentTime || 0)}s）` }),
       });
       if (result?.success) {
         flashNoteButton(UI.uiCopy("saved"));
+        showNoteSavedToast(result.memo);
       } else {
         // 与 YouTube 侧对齐：失败必须留下具体原因，否则永远只能看到笼统的「保存失败」。
         console.error("[Video Assistant] B站手记保存失败：", result?.error, result?.message);
@@ -407,6 +479,22 @@
   }
 
   async function init() {
+    // 孤儿检测：扩展重载/更新后，旧 content script 仍留在此页面里，它的
+    // chrome.runtime 已失效。旧脚本的 setInterval 会继续跑并反复抛
+    // “Extension context invalidated”，还会 remove() 新脚本注入的按钮——
+    // 两代脚本互相拆台，按钮永远点不动。这里一旦探测到 runtime 失效，
+    // 立即停掉本实例的所有定时器并不再注入（新脚本会接管）。
+    let orphaned = false;
+    try {
+      chrome.runtime.getURL("");
+    } catch (error) {
+      orphaned = true;
+    }
+    if (orphaned) {
+      debugLog("[Video Assistant] 检测到扩展已重载，旧内容脚本退出。");
+      return;
+    }
+
     try {
       const scope = await chrome.runtime.sendMessage({
         action: "isSiteEnabled",
@@ -439,7 +527,18 @@
     if (siteEnabled) injectButtons();
     // 定时自查而非 MutationObserver：弹幕每飘一条都是 DOM 变更，观察 body 白烧
     // CPU 还会让防抖永远等不到空档。定时器顺带覆盖了 SPA 换页（不触发事件）。
-    setInterval(injectButtons, REINJECT_INTERVAL_MS);
+    // 每轮先做孤儿探测：扩展重载后本实例立即停摆，把页面让给新注入的脚本。
+    reinjectTimer = setInterval(() => {
+      try {
+        chrome.runtime.getURL("");
+      } catch (error) {
+        clearInterval(reinjectTimer);
+        reinjectTimer = null;
+        debugLog("[Video Assistant] 扩展已重载，旧内容脚本停止注入。");
+        return;
+      }
+      injectButtons();
+    }, REINJECT_INTERVAL_MS);
   }
 
   init();

@@ -64,6 +64,7 @@
         "https://www.bilibili.com/list/*"
       ],
       "js": [
+        "lib/visual-memos.js",
         "content-shared.js",
         "content-bilibili.js"
       ],
@@ -74,6 +75,7 @@
         "https://www.youtube.com/watch*"
       ],
       "js": [
+        "lib/visual-memos.js",
         "content-shared.js",
         "content-youtube.js"
       ],

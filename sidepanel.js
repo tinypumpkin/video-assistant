@@ -94,13 +94,12 @@ const SIDE_PANEL_EN = Object.freeze({
   "关联概述": "Use overview",
   "关联 AI 笔记": "Use AI notes",
   "关联手记": "Use memos",
-  "关联 AI 记": "Use saved AI answers",
   "清空对话": "Clear chat",
   "Enter 发送 · Shift+Enter 换行": "Enter to send · Shift+Enter for a new line",
   "发送": "Send",
   "想问 AI 什么？": "What would you like to ask?",
-  "选择字幕、概述、AI 笔记、手记或 AI 记作为当前视频的上下文。":
-    "Choose the transcript, overview, AI notes, memos, or saved AI answers as context for the current video.",
+  "选择字幕、概述、AI 笔记或手记作为当前视频的上下文。":
+    "Choose the transcript, overview, AI notes, or memos as context for the current video.",
   "请先打开一个支持的视频，再使用问 AI。":
     "Open a supported video before using Ask AI.",
   "解释": "Explain",
@@ -170,6 +169,7 @@ const SIDE_PANEL_EN = Object.freeze({
   "已显示": "Showing",
   "共": "of",
   "访问锚点": "Open timestamp",
+  "手记截图": "Memo screenshot",
   "已保存，并记录当前视频访问锚点。":
     "Saved with the current video timestamp.",
   "已保存。": "Saved.",
@@ -1173,7 +1173,6 @@ function chatContextSelection() {
     overview: Boolean(el("chatContextOverview").checked),
     notes: Boolean(el("chatContextNotes").checked),
     memos: Boolean(el("chatContextMemos").checked),
-    aiRecords: Boolean(el("chatContextAiRecords").checked),
   };
 }
 
@@ -2364,11 +2363,70 @@ function renderAiVideoNoteDocument(note) {
 
   const body = document.createElement("div");
   body.className = "ai-note-document-body markdown-body";
-  BILI_MARKDOWN.render(body, note.text, document);
+  renderMarkdownWithVisualReferences(body, note, document);
   scheduleMermaidRun();
 
   article.appendChild(body);
   return article;
+}
+
+function renderMarkdownWithVisualReferences(container, note, doc) {
+  const references = Array.isArray(note?.visualReferences) ? note.visualReferences : [];
+  const referenceMap = new Map(references.map((reference) => [reference.citationId, reference]));
+  const cleanText = BILI_VISUAL_MEMOS.sanitizeCitationMarkers(
+    note?.text,
+    [...referenceMap.keys()],
+  );
+  const parts = cleanText.split(BILI_VISUAL_MEMOS.CITATION_RE);
+  if (parts.length === 1) {
+    BILI_MARKDOWN.render(container, cleanText, doc);
+    return;
+  }
+
+  container.textContent = "";
+  parts.forEach((part, index) => {
+    if (index % 2 === 1) {
+      const reference = referenceMap.get(part);
+      if (reference) container.appendChild(buildVisualReferenceFigure(reference, doc));
+      return;
+    }
+    if (!part.trim()) return;
+    const section = doc.createElement("div");
+    BILI_MARKDOWN.render(section, part, doc);
+    const children = typeof section.childNodes?.[Symbol.iterator] === "function"
+      ? [...section.childNodes]
+      : [];
+    if (children.length) {
+      for (const child of children) container.appendChild(child);
+    } else {
+      container.appendChild(section);
+    }
+  });
+}
+
+function buildVisualReferenceFigure(reference, doc) {
+  const figure = doc.createElement("figure");
+  figure.className = "ai-note-visual-reference";
+
+  const image = doc.createElement("img");
+  image.src = reference.imageDataUrl;
+  image.alt = `${uiText("手记截图")} ${reference.timestamp || ""}`.trim();
+  figure.appendChild(image);
+
+  const caption = doc.createElement("figcaption");
+  const label = doc.createElement("span");
+  label.textContent = `${uiText("手记截图")} · ${reference.timestamp || ""}`.trim();
+  caption.appendChild(label);
+  if (reference.timestampedUrl) {
+    const link = doc.createElement("a");
+    link.href = reference.timestampedUrl;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = uiText("访问锚点");
+    caption.appendChild(link);
+  }
+  figure.appendChild(caption);
+  return figure;
 }
 
 let aiVideoNoteEditSession = null;
@@ -2696,7 +2754,11 @@ function renderMemoCard(
   // 手记与 AI 记也支持 Markdown，避免同一份已保存内容在不同栏目展示不一致。
   const text = document.createElement("div");
   text.className = "entry-text markdown-body";
-  BILI_MARKDOWN.render(text, memo.text, document);
+  if (memo.kind === "ai_video_note") {
+    renderMarkdownWithVisualReferences(text, memo, document);
+  } else {
+    BILI_MARKDOWN.render(text, memo.text, document);
+  }
   scheduleMermaidRun();
 
   const meta = document.createElement("p");
@@ -2860,7 +2922,9 @@ async function playNote(note, notice) {
 
 function setNotesScope(scope) {
   state.notesScope = scope;
-  if (scope !== "video") setNotesView("list");
+  // 上一个范围可能把 notesEntries 隐藏（手记、AI 记或导图）；切换任何范围时
+  // 都先恢复列表可见性，避免回到“本视频”后只剩工具栏、正文仍被 hidden。
+  setNotesView("list");
   state.selectedNoteIds.clear();
   el("notesScopeVideo").classList.toggle("active", scope === "video");
   el("notesScopeAll").classList.toggle("active", scope === "all");

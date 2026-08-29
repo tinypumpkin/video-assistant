@@ -103,6 +103,23 @@ test("视觉附件忽略非法数据和没有用户消息的输入", () => {
   );
 });
 
+test("视觉手记按时间标签与图片交错附加", () => {
+  const image = "data:image/jpeg;base64,QUJDRA==";
+  const refs = [
+    { label: "[手记截图｜1:20]", dataUrl: image },
+    { label: "[手记截图｜2:40]", dataUrl: image },
+  ];
+  const openai = provider.attachVisualReferencesToLastUserMessage(PROTOCOLS.OPENAI, MESSAGES, refs);
+  assert.deepEqual(openai.at(-1).content.map((block) => block.type), [
+    "text", "text", "image_url", "text", "image_url",
+  ]);
+  assert.equal(openai.at(-1).content[1].text.trim(), "[手记截图｜1:20]");
+  const anthropic = provider.attachVisualReferencesToLastUserMessage(PROTOCOLS.ANTHROPIC, MESSAGES, refs);
+  assert.deepEqual(anthropic.at(-1).content.map((block) => block.type), [
+    "text", "text", "image", "text", "image",
+  ]);
+});
+
 test("OpenAI 协议：从 choices 里取文本", () => {
   assert.equal(
     provider.parseChatResponse(PROTOCOLS.OPENAI, {

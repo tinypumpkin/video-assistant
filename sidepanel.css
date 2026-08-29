@@ -1908,6 +1908,39 @@ kbd {
   overflow-wrap: anywhere;
 }
 
+.ai-note-visual-reference {
+  margin: 18px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--card);
+}
+
+.ai-note-visual-reference img {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  background: #0f172a;
+}
+
+.ai-note-visual-reference figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+
+.ai-note-visual-reference figcaption a {
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
 .ai-note-document-body h1 {
   margin: 0 0 28px;
   font-size: clamp(26px, 4vw, 34px);

@@ -504,6 +504,7 @@ test("问 AI 可按需关联当前视频字幕、概览、AI 笔记和手记", (
   assert.match(html, /id="chatContextOverview"[^>]*checked/);
   assert.match(html, /id="chatContextNotes"[^>]*checked/);
   assert.match(html, /id="chatContextMemos"[^>]*checked/);
+  assert.doesNotMatch(html, /chatContextAiRecords|关联 AI 记/);
   assert.match(sidepanel, /function chatContextSelection\(/);
   assert.match(sidepanel, /contextSelection:\s*chatContextSelection\(\)/);
   assert.match(background, /function normalizeChatContextSelection\(/);
@@ -512,6 +513,7 @@ test("问 AI 可按需关联当前视频字幕、概览、AI 笔记和手记", (
   assert.match(background, /function memosAsChatContext\(/);
   assert.match(background, /note\.kind === "memo"/);
   assert.match(background, /memoImages/);
+  assert.doesNotMatch(background, /aiRecordsAsChatContext|aiRecordsContext|selectedContext\.aiRecords/);
   assert.match(background, /function handleUpdateNote\(/);
   assert.match(sidepanel, /function beginNoteEdit\(/);
   assert.match(sidepanel, /action:\s*"updateNote"/);
@@ -614,7 +616,7 @@ test("笔记范围按本视频、手记、AI 记、全部排列，全部视图�
   assert.match(sidepanel, /scope:\s*state\.notesScope/);
   assert.match(sidepanel, /function renderAnyNote\(note\)/);
   assert.match(background, /if \(scope === "all"\)/);
-  assert.match(background, /\.\.\.pageNotes\(notes, page\)/);
+  assert.match(background, /\.\.\.pageNotes\(notes\.map\([^\n]+hydrateAiNoteVisualReferences/);
 });
 
 test("笔记上限可配置，写入守住 7 MB 安全线，并在超过 100 条时分页", () => {

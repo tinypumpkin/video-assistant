@@ -98,7 +98,14 @@
   // SVG 1254×1254，浏览器会缩放到 28×28。
   function digestIcon() {
     const img = document.createElement("img");
-    img.src = chrome.runtime.getURL(BRAND_ICON_PATH);
+    try {
+      img.src = chrome.runtime.getURL(BRAND_ICON_PATH);
+    } catch (error) {
+      // 扩展重载后 runtime 失效：返回无 src 的占位图而不是抛异常，
+      // 让注入流程的其余部分（按钮结构、事件绑定）继续完成。
+      img.remove();
+      return document.createElement("span");
+    }
     img.alt = "";
     img.width = DIGEST_ICON_SIZE;
     img.height = DIGEST_ICON_SIZE;
@@ -208,6 +215,27 @@
     }
   }
 
+  // 只在 96×54 的缩略采样上做灰度统计，约 5 千像素；避免对 840px 截图
+  // 做整图分析。返回值随手记一起保存，后台生成 AI 笔记时据此过滤空白、
+  // 纯黑、严重模糊以及低信息过场帧。
+  function analyzeImagePixels(rgba, width, height) {
+    return globalThis.BILI_VISUAL_MEMOS?.analyzeImagePixels(rgba, width, height) || null;
+  }
+
+  function analyzeVideoFrame(video, { width = 96, height = 54 } = {}) {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return null;
+      ctx.drawImage(video, 0, 0, width, height);
+      return analyzeImagePixels(ctx.getImageData(0, 0, width, height).data, width, height);
+    } catch (error) {
+      return null;
+    }
+  }
+
   globalThis.VideoAssistantUI = {
     BRAND_ICON_PATH,
     DIGEST_HINT_CLASS,
@@ -230,5 +258,7 @@
     uiCopy,
     COPY_KEYS: Object.keys(COPY_ZH),
     refreshNoteButtonLanguage,
+    analyzeImagePixels,
+    analyzeVideoFrame,
   };
 })();
