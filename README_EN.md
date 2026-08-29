@@ -44,17 +44,23 @@
 - Free-form "Ask AI" conversations; optionally attach transcript, overview, or notes
 - Explain selected text in place
 - Editable overview prompts with auto-save & reset to default
+- **Multimodal model support**: provider vision capability is auto-detected; visual requests are routed only to vision-capable providers
+
+### 🪄 AI Video Note
+- One click turns the full transcript into structured, revision-ready notes
+- **References memo screenshots while generating**: up to 6 valid screenshots of the current video (pixel-quality filtering + perceptual-hash dedup) are sent with the vision request; `{{va-cite}}` markers in the note body render as clickable screenshot cards (with timestamps and video jump links)
+- Text-only models automatically fall back to transcript-only generation
 
 </td>
 <td width="50%">
 
 ### 📌 Notes System
 - **Notes**: saved from transcript/overview/text-selection with timestamp anchors
-- **Memos**: quick free-form entries; video pages add title + playback-position anchors
-- **AI Notes**: collects answers saved from Q&A
+- **Memos**: quick free-form entries + **video-frame screenshots**; video pages add title + playback-position anchors; a toast card (timestamp/title/copy link) pops up on save
 - Filtered to the current video by default; "All" shows across videos
 - Batch delete & clear-by-scope (with confirmation)
 - Export to TXT / CSV / Markdown
+- **Note mindmap**: turn the AI video note into a mindmap view in one click (original `note-mindmap.js` + markmap)
 
 ### 🪟 Per-tab Side Panel
 - Each video tab gets its **own panel** — no cross-talk
