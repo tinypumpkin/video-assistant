@@ -802,16 +802,11 @@ body {
   white-space: pre-wrap;
 }
 
-/* 快捷键手记的视频截图缩略图：贴正文上方，点开看大图。
-   固定横幅高度 + 顶部裁切：截图的信息（图表标题/字幕）集中在画面上部，
-   等比缩放会把手记卡片撑得很高，改为 cover 裁切保持列表紧凑。 */
+/* 快捷键手记的视频截图缩略图：贴正文上方，点开看大图。 */
 .memo-shot {
   display: block;
   width: 100%;
   max-width: 360px;
-  height: 112px;
-  object-fit: cover;
-  object-position: top;
   border-radius: 8px;
   border: 1px solid var(--border);
   cursor: zoom-in;
@@ -1924,9 +1919,8 @@ kbd {
 .ai-note-visual-reference img {
   display: block;
   width: 100%;
-  max-height: 180px;
-  object-fit: cover;
-  object-position: top;
+  max-height: 360px;
+  object-fit: contain;
   background: #0f172a;
 }
 
