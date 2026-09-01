@@ -277,7 +277,7 @@ function createContext({
   // 所以在末尾追加一行，从同一个词法作用域里把要测的绑定递出来。
   const source = fs.readFileSync(path.join(ROOT, "sidepanel.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { state, uiText, parseVideoRef, activeTab, syncWithActiveTab, loadTranscript, analyze, renderSegments, renderAnalysis, segmentDisplayText, noteTextForSegment, saveTextAsVideoNote, paintSegmentText, setTranscriptMode, selectionContext, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, renderMemoCard, renderAiVideoNoteDocument, renderMarkdownWithVisualReferences, copyCurrentAiVideoNote, copyMemoToClipboard, startAiVideoNoteEdit, cancelAiVideoNoteEdit, saveAiVideoNoteEdit, deleteCurrentAiVideoNote, resetCurrentAiVideoNote, exportNotesFromSelect, notesAsMarkdown, notesAsCsv, playNote, saveMemo, currentMemoVideoContext, submitChatQuestion, saveChatAsNote, renderChat, appendChatDelta, flushTypewriter, displayedChatText, switchTab, renderOverviewPrompt, resetOverviewPrompt, renderNotePrompt, resetNotePrompt, renderNoteStyleSelector, updateNoteStyle, selectedNotePrompt, generateVideoNote, renderNotes, renderMemos, loadNotes, chatContextSelection, setNotesScope, setNotesView, renderNotesMindmap };`,
+    `${source}\n;globalThis.__api = { state, uiText, parseVideoRef, activeTab, syncWithActiveTab, loadTranscript, analyze, renderSegments, renderAnalysis, segmentDisplayText, noteTextForSegment, saveTextAsVideoNote, paintSegmentText, setTranscriptMode, selectionContext, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, renderMemoCard, renderAiVideoNoteDocument, renderMarkdownWithVisualReferences, noteMarkdownForMindmap, buildMindmapDocumentTree, copyCurrentAiVideoNote, copyMemoToClipboard, startAiVideoNoteEdit, cancelAiVideoNoteEdit, saveAiVideoNoteEdit, deleteCurrentAiVideoNote, resetCurrentAiVideoNote, exportNotesFromSelect, notesAsMarkdown, notesAsCsv, playNote, saveMemo, currentMemoVideoContext, submitChatQuestion, saveChatAsNote, renderChat, appendChatDelta, flushTypewriter, displayedChatText, switchTab, renderOverviewPrompt, resetOverviewPrompt, renderNotePrompt, resetNotePrompt, renderNoteStyleSelector, updateNoteStyle, selectedNotePrompt, generateVideoNote, renderNotes, renderMemos, loadNotes, chatContextSelection, setNotesScope, setNotesView, renderNotesMindmap };`,
     context,
   );
 
@@ -1413,7 +1413,7 @@ test("复制带图片的手记会写入含 Base64 图片的富文本剪贴板", 
   assert.equal(ctx.clipboardTexts.length, 0);
 });
 
-test("带图片的手记导出时保留 Base64 图片数据", () => {
+test("Markdown 导出保留图片，CSV 只导出资产引用而不重复 Base64", () => {
   const ctx = createContext({ transcript: transcriptResult() });
   const imageDataUrl = "data:image/jpeg;base64,/9j/4AAQ";
   const memo = {
@@ -1427,8 +1427,34 @@ test("带图片的手记导出时保留 Base64 图片数据", () => {
   const markdown = ctx.notesAsMarkdown([memo]);
   const csv = ctx.notesAsCsv([memo]);
   assert.match(markdown, new RegExp(`!\\[手记图片\\]\\(${imageDataUrl.replace(/[+/?]/g, "\\$&")}\\)`));
-  assert.match(csv.split("\r\n")[0], /imageDataUrl/);
-  assert.match(csv, /data:image\/jpeg;base64/);
+  assert.match(csv.split("\r\n")[0], /imageAssetId/);
+  assert.doesNotMatch(csv, /data:image\/jpeg;base64/);
+});
+
+test("AI 笔记 Markdown 导出和复制会把引用标记展开为截图", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  const note = {
+    id: "ai_export_visual_1",
+    kind: "ai_video_note",
+    text: "## 关键结论\n\n{{va-cite:cite_01}}\n\n进一步解释。",
+    createdAt: Date.now(),
+    visualReferences: [{
+      citationId: "cite_01",
+      imageDataUrl: "data:image/jpeg;base64,QUJD",
+      timestamp: "5:20",
+      timestampedUrl: "https://www.youtube.com/watch?v=abc&t=320",
+    }],
+  };
+  const markdown = ctx.notesAsMarkdown([note]);
+  assert.doesNotMatch(markdown, /va-cite/);
+  assert.match(markdown, /\[!\[手记截图 5:20\]\(data:image\/jpeg;base64,QUJD\)\]\(https:\/\/www\.youtube\.com/);
+
+  ctx.state.notesLoaded = [note];
+  await ctx.copyCurrentAiVideoNote();
+  assert.equal(ctx.clipboardWrites.length, 1);
+  const item = ctx.clipboardWrites[0][0];
+  assert.match(item.items["text/plain"].text, /data:image\/jpeg;base64,QUJD/);
+  assert.match(item.items["text/html"].text, /<img src="data:image\/jpeg;base64,QUJD"/);
 });
 
 test("普通页面保存手记时不携带任何视频信息", async () => {
@@ -1592,6 +1618,59 @@ test("AI 视频笔记在 Markdown 中把引用标记渲染成手记截图", () =
     ...(node?.children || []).flatMap(collectText),
   ].join(" ");
   assert.doesNotMatch(collectText(body), /va-cite/);
+});
+
+test("含图片引用的 AI 笔记切换导图时渲染安全缩略图节点", () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  const note = {
+    id: "ai-mindmap-with-image",
+    kind: "ai_video_note",
+    text: "# PMF 笔记\n\n## 判断 PMF\n\n月流失率说明。\n\n{{va-cite:cite_01}}\n\n## 后续章节\n正文",
+    visualReferences: [{
+      citationId: "cite_01",
+      imageDataUrl: "data:image/jpeg;base64,QUJD",
+      timestamp: "14:04",
+      timestampedUrl: "https://www.youtube.com/watch?v=abc&t=844",
+    }],
+  };
+
+  const markdown = ctx.noteMarkdownForMindmap(note);
+  assert.doesNotMatch(markdown, /va-cite|data:image/);
+  assert.match(markdown, /VAVISUALREFERENCE[0-9a-f]+/);
+
+  const tree = ctx.buildMindmapDocumentTree("视频标题", note);
+  const nodes = [];
+  const visit = (node) => {
+    nodes.push(node);
+    for (const child of node.children || []) visit(child);
+  };
+  visit(tree);
+  const visual = nodes.find((node) => node.payload?.kind === "visual-reference");
+  assert.ok(visual, "引用位置必须生成专用图片节点");
+  assert.match(visual.content, /<img class="mindmap-visual-reference-image"/);
+  assert.match(visual.content, /src="data:image\/jpeg;base64,QUJD"/);
+  assert.match(visual.content, /手记截图 · 14:04/);
+  assert.match(visual.content, /href="https:\/\/www\.youtube\.com\/watch\?v=abc&amp;t=844"/);
+  assert.doesNotMatch(JSON.stringify(tree), /va-cite/);
+});
+
+test("导图图片引用拒绝 SVG 和脚本 URL，并降级为文字节点", () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  const note = {
+    kind: "ai_video_note",
+    text: "# 安全测试\n\n{{va-cite:cite_bad}}",
+    visualReferences: [{
+      citationId: "cite_bad",
+      imageDataUrl: "data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9YWxlcnQoMSk+",
+      timestamp: "1:02",
+      timestampedUrl: "javascript:alert(1)",
+    }],
+  };
+
+  const treeJson = JSON.stringify(ctx.buildMindmapDocumentTree("视频", note));
+  assert.doesNotMatch(treeJson, /<img|javascript:|svg\+xml|va-cite/);
+  assert.match(treeJson, /📷 手记截图 · 1:02/);
+  assert.match(treeJson, /"kind":"visual-reference-fallback"/);
 });
 
 test("AI 笔记功能栏的复制与删除操作指向当前生成文档", async () => {

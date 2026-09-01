@@ -11,6 +11,10 @@ const exists = (file) => fs.existsSync(path.join(root, file));
 
 const manifest = readJson("manifest.json");
 
+test("清单版本与包版本保持一致，确保 Chrome 能识别新构建", () => {
+  assert.equal(manifest.version, readJson("package.json").version);
+});
+
 test("是一份 MV3 清单", () => {
   assert.equal(manifest.manifest_version, 3);
   assert.ok(manifest.version);
@@ -599,10 +603,21 @@ test("笔记页提供 JSON、Markdown 和 CSV 本地导出下拉框", () => {
   assert.match(sidepanel, /function notesAsCsv\(notes\)/);
 });
 
-test("笔记只使用 video_digest_notes 存储键", () => {
+test("笔记仅使用 IndexedDB V2，不再保留 V1 迁移与回退路径", () => {
   const background = readText("background.js");
-  assert.match(background, /const NOTES_STORAGE_KEY = "video_digest_notes"/);
-  assert.doesNotMatch(background, /bili_digest_notes|LEGACY_NOTES_STORAGE_KEY/);
+  const database = readText("lib/note-db.js");
+  assert.doesNotMatch(background, /video_digest_notes|NOTES_STORAGE_KEY|migrateLegacy/);
+  assert.doesNotMatch(database, /video_digest_notes|migrateLegacy|migrationMeta/);
+  assert.match(background, /BILI_NOTE_DB\.listNotes/);
+  assert.match(background, /BILI_NOTE_DB\.applyChanges/);
+  assert.match(database, /DB_NAME = "video_assistant_notes"/);
+  for (const store of ["notes", "assets", "note_assets", "meta"]) {
+    assert.match(database, new RegExp(`["']${store}["']`));
+  }
+  assert.match(database, /exactHash/);
+  assert.match(database, /assetSchemaVersion: 1/);
+  assert.doesNotMatch(database, /captureAsset[\s\S]{0,300}schemaVersion: 1/);
+  assert.match(database, /collectGarbage/);
 });
 
 test("笔记范围按本视频、手记、AI 记、全部排列，全部视图汇总所有笔记类型", () => {
@@ -619,7 +634,7 @@ test("笔记范围按本视频、手记、AI 记、全部排列，全部视图�
   assert.match(background, /\.\.\.pageNotes\(notes\.map\([^\n]+hydrateAiNoteVisualReferences/);
 });
 
-test("笔记上限可配置，写入守住 7 MB 安全线，并在超过 100 条时分页", () => {
+test("笔记上限可配置，V2 截图有独立容量线，并在超过 100 条时分页", () => {
   const settings = readText("settings.js");
   const options = readText("options.html");
   const background = readText("background.js");
@@ -627,10 +642,26 @@ test("笔记上限可配置，写入守住 7 MB 安全线，并在超过 100 条
   const html = readText("sidepanel.html");
   assert.match(settings, /noteLimit: Object\.freeze\(\{ min: 1, max: 400, default: 100 \}\)/);
   assert.match(options, /id="noteLimit"[^>]*max="400"/);
-  assert.match(background, /NOTE_STORAGE_SAFE_BYTES = 7 \* 1024 \* 1024/);
+  assert.match(readText("lib/note-db.js"), /DEFAULT_ASSET_BUDGET_BYTES = 200 \* 1024 \* 1024/);
   assert.match(background, /function pageNotes\(/);
   assert.match(sidepanel, /const NOTES_PAGE_SIZE = 100/);
   assert.match(html, /id="loadMoreNotesBtn"/);
+});
+
+test("AI 视频笔记把手记文字、附近字幕和图片作为同一视觉补充组", () => {
+  const background = readText("background.js");
+  const provider = readText("lib/ai-provider.js");
+  const visualMemos = readText("lib/visual-memos.js");
+  const prompt = readText("prompts/note-generation.md");
+  assert.match(visualMemos, /memoText:\s*String\(note\.text/);
+  assert.match(background, /function visualTranscriptWindow\(/);
+  assert.match(background, /memoText:\s*reference\.memoText/);
+  assert.match(background, /transcriptWindow:\s*reference\.transcriptWindow/);
+  assert.match(provider, /手记文字 \/ Memo text/);
+  assert.match(provider, /对应时间点附近字幕 \/ Nearby transcript/);
+  assert.match(prompt, /不得跨组关联/);
+  assert.match(prompt, /不得把引用集中放在文末/);
+  assert.match(background, /relocateCitationMarkers\(/);
 });
 
 test("笔记页支持多选删除与按当前范围一键清空", () => {
@@ -852,7 +883,7 @@ test("侧边栏 per-tab 语义：打开按 tabId、进度与按钮广播定向",
   assert.match(sidepanel, /videoNoteGenerating/);
 });
 
-test("手记保存失败时 error 与 message 双字段透传，缓存超线先清缓存", () => {
+test("手记保存失败透传明确错误，V2 不再执行旧存储清缓存分支", () => {
   const background = readText("background.js");
 
   // saveMemo 路由的 catch 必须同时带 error 和 message：UI 两端一个读 error
@@ -862,13 +893,6 @@ test("手记保存失败时 error 与 message 双字段透传，缓存超线先�
     /sendResponse\(\{ success: false, error: error\.message, message: error\.message \}\)/,
   );
 
-  // 缓存（digest_*）超安全线时先清缓存腾空间，而不是直接拒绝保存——
-  // 缓存可再生成（重新拉字幕就有），笔记不可再生，绝不为缓存牺牲笔记。
-  assert.match(background, /async function clearDigestCache\(\)/);
-  assert.match(background, /startsWith\(BILI_CACHE\.CACHE_PREFIX\)/);
-  assert.match(
-    background,
-    /nonNoteBytes >= NOTE_STORAGE_SAFE_BYTES[\s\S]{0,80}clearDigestCache\(\)/,
-    "缓存超线必须走清缓存分支而非直接 storageBlocked",
-  );
+  assert.doesNotMatch(background, /clearDigestCache|NOTE_STORAGE_SAFE_BYTES|capNotesForStorage/);
+  assert.match(background, /BILI_NOTE_DB\.applyChanges/);
 });

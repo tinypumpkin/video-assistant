@@ -2196,18 +2196,48 @@ function notesAsCsv(notes) {
     "timestampedUrl",
     "rawText",
     "pending",
-    "imageDataUrl",
+    "imageAssetId",
+    "visualCitationCount",
+    "visualCitationTimestamps",
   ];
   return [
     fields.map(csvCell).join(","),
     ...notes.map((note) =>
       fields
-        .map((field) =>
-          csvCell(field === "createdAtISO" ? noteCreatedAt(note) : note[field]),
-        )
+        .map((field) => {
+          if (field === "createdAtISO") return csvCell(noteCreatedAt(note));
+          if (field === "visualCitationCount") {
+            return csvCell(Array.isArray(note.visualReferences) ? note.visualReferences.length : 0);
+          }
+          if (field === "visualCitationTimestamps") {
+            return csvCell(
+              (Array.isArray(note.visualReferences) ? note.visualReferences : [])
+                .map((reference) => reference.timestamp || reference.timestampSeconds)
+                .filter((value) => value !== "" && value != null)
+                .join(" | "),
+            );
+          }
+          return csvCell(note[field]);
+        })
         .join(","),
     ),
   ].join("\r\n");
+}
+
+function noteMarkdownWithVisualReferences(note, english = state.uiLanguage === "en") {
+  const references = Array.isArray(note?.visualReferences) ? note.visualReferences : [];
+  const referenceMap = new Map(references.map((reference) => [reference.citationId, reference]));
+  const cleanText = BILI_VISUAL_MEMOS.sanitizeCitationMarkers(
+    note?.text,
+    [...referenceMap.keys()],
+  );
+  return cleanText.replace(BILI_VISUAL_MEMOS.CITATION_RE, (_marker, citationId) => {
+    const reference = referenceMap.get(citationId);
+    if (!reference?.imageDataUrl) return "";
+    const label = `${english ? "Memo screenshot" : "手记截图"}${reference.timestamp ? ` ${reference.timestamp}` : ""}`;
+    const image = `![${label}](${reference.imageDataUrl})`;
+    return reference.timestampedUrl ? `\n\n[${image}](${reference.timestampedUrl})\n\n` : `\n\n${image}\n\n`;
+  });
 }
 
 function notesAsMarkdown(notes) {
@@ -2224,7 +2254,7 @@ function notesAsMarkdown(notes) {
     if (note.timestampedUrl) {
       lines.push(`- ${english ? "Source" : "来源"}: ${note.timestampedUrl}`);
     }
-    lines.push("", String(note.text || "").trim());
+    lines.push("", noteMarkdownWithVisualReferences(note, english).trim());
     // 视频截图在保存时已经由 canvas.toDataURL 转为 Base64 data URL。
     // Markdown 导出直接内嵌该 URL，离线打开时图片不会丢失。
     if (
@@ -2297,17 +2327,16 @@ async function exportNotes(format) {
   const notes = await notesForCurrentScope();
   if (!notes.length) return;
   if (format === "json") {
+    const response = await chrome.runtime.sendMessage({
+      action: "exportNotesV2",
+      noteIds: notes.map((note) => note.id),
+    });
+    if (!response?.success || !response.bundle) {
+      throw new Error(response?.error || uiText("导出失败"));
+    }
+    const payload = { ...response.bundle, scope: state.notesScope };
     downloadNotesFile(
-      JSON.stringify(
-        {
-          version: 1,
-          exportedAt: new Date().toISOString(),
-          scope: state.notesScope,
-          notes,
-        },
-        null,
-        2,
-      ),
+      JSON.stringify(payload, null, 2),
       "json",
       "application/json",
     );
@@ -2429,6 +2458,95 @@ function buildVisualReferenceFigure(reference, doc) {
   return figure;
 }
 
+const MINDMAP_VISUAL_TOKEN_PREFIX = "VAVISUALREFERENCE";
+
+function mindmapVisualToken(citationId) {
+  const encoded = Array.from(String(citationId || ""))
+    .map((character) => character.codePointAt(0).toString(16).padStart(2, "0"))
+    .join("");
+  return `${MINDMAP_VISUAL_TOKEN_PREFIX}${encoded}`;
+}
+
+/** 将图片引用变成不会被 Markdown 清洗掉的临时列表节点。 */
+function noteMarkdownForMindmap(note) {
+  const references = Array.isArray(note?.visualReferences) ? note.visualReferences : [];
+  const referenceMap = new Map(
+    references
+      .filter((reference) => reference?.citationId)
+      .map((reference) => [reference.citationId, reference]),
+  );
+  const cleanText = BILI_VISUAL_MEMOS.sanitizeCitationMarkers(
+    note?.text || note?.content || "",
+    [...referenceMap.keys()],
+  );
+  return cleanText
+    .replace(BILI_VISUAL_MEMOS.CITATION_RE, (_marker, citationId) => {
+      const reference = referenceMap.get(citationId);
+      if (!reference) return "";
+      return `\n- ${mindmapVisualToken(citationId)}\n`;
+    })
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function mindmapVisualImageSource(reference) {
+  const source = String(reference?.imageDataUrl || "").replace(/\s+/g, "");
+  return /^data:image\/(?:png|jpe?g|webp|gif);base64,[a-z0-9+/=]+$/i.test(source)
+    ? source
+    : "";
+}
+
+function mindmapVisualAnchorUrl(reference) {
+  try {
+    const url = new URL(String(reference?.timestampedUrl || ""));
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * NOTE_MINDMAP 默认会转义全部 HTML；只有内部图片引用节点在完成建树后，
+ * 才由这里替换成受控 HTML，避免开放任意 Markdown HTML 的 XSS 入口。
+ */
+function buildMindmapDocumentTree(rootTitle, note) {
+  const references = Array.isArray(note?.visualReferences) ? note.visualReferences : [];
+  const referenceMap = new Map(
+    references
+      .filter((reference) => reference?.citationId)
+      .map((reference) => [mindmapVisualToken(reference.citationId), reference]),
+  );
+  const tree = NOTE_MINDMAP.buildDocumentTree(rootTitle, noteMarkdownForMindmap(note));
+  const visit = (node) => {
+    const content = String(node?.content || "");
+    if (content.startsWith(MINDMAP_VISUAL_TOKEN_PREFIX)) {
+      const reference = referenceMap.get(content);
+      const citationId = String(reference?.citationId || "");
+      const imageSource = mindmapVisualImageSource(reference);
+      const timestamp = String(reference?.timestamp || "").trim();
+      const label = timestamp
+        ? `${uiText("手记截图")} · ${timestamp}`
+        : uiText("手记截图");
+      const safeLabel = escapeClipboardHtml(label);
+      const anchorUrl = mindmapVisualAnchorUrl(reference);
+      if (imageSource) {
+        const image = `<img class="mindmap-visual-reference-image" src="${imageSource}" alt="${safeLabel}">`;
+        const media = anchorUrl
+          ? `<a class="mindmap-visual-reference-link" href="${escapeClipboardHtml(anchorUrl)}" target="_blank" rel="noreferrer">${image}</a>`
+          : image;
+        node.content = `<figure class="mindmap-visual-reference">${media}<figcaption>${safeLabel}</figcaption></figure>`;
+        node.payload = { ...node.payload, kind: "visual-reference", citationId };
+      } else {
+        node.content = escapeClipboardHtml(`📷 ${label}`);
+        node.payload = { ...node.payload, kind: "visual-reference-fallback", citationId };
+      }
+    }
+    for (const child of node?.children || []) visit(child);
+  };
+  visit(tree);
+  return tree;
+}
+
 let aiVideoNoteEditSession = null;
 
 function currentAiVideoNote() {
@@ -2457,7 +2575,40 @@ async function copyCurrentAiVideoNote() {
   const note = currentAiVideoNote();
   if (!note) return;
   const button = el("aiNoteCopyBtn");
-  await navigator.clipboard.writeText(note.text || "");
+  const plainText = noteMarkdownWithVisualReferences(note);
+  const references = Array.isArray(note.visualReferences) ? note.visualReferences : [];
+  if (
+    references.some((reference) => reference?.imageDataUrl) &&
+    typeof ClipboardItem !== "undefined" &&
+    typeof navigator.clipboard?.write === "function"
+  ) {
+    const referenceMap = new Map(references.map((reference) => [reference.citationId, reference]));
+    const cleanText = BILI_VISUAL_MEMOS.sanitizeCitationMarkers(
+      note?.text,
+      [...referenceMap.keys()],
+    );
+    const html = cleanText.split(BILI_VISUAL_MEMOS.CITATION_RE).map((part, index) => {
+      if (index % 2 === 0) return `<div style="white-space:pre-wrap">${escapeClipboardHtml(part)}</div>`;
+      const reference = referenceMap.get(part);
+      if (!reference?.imageDataUrl) return "";
+      const image = `<img src="${reference.imageDataUrl}" alt="${escapeClipboardHtml(reference.timestamp || uiText("手记截图"))}">`;
+      return reference.timestampedUrl
+        ? `<a href="${escapeClipboardHtml(reference.timestampedUrl)}">${image}</a>`
+        : image;
+    }).join("");
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/plain": new Blob([plainText], { type: "text/plain;charset=utf-8" }),
+          "text/html": new Blob([html], { type: "text/html;charset=utf-8" }),
+        }),
+      ]);
+    } catch (_error) {
+      await navigator.clipboard.writeText(plainText);
+    }
+  } else {
+    await navigator.clipboard.writeText(plainText);
+  }
   flashActionButton(button, "已复制");
 }
 
@@ -3096,6 +3247,27 @@ function queueMindmapFit() {
   attempt();
 }
 
+/** 图片异步解码后节点尺寸会变化；等缩略图完成再重新居中。 */
+function bindMindmapImageFit(attempt = 0) {
+  setTimeout(() => {
+    const images = document.querySelectorAll(
+      "#notesMindmapSvg .mindmap-visual-reference-image",
+    );
+    // Markmap.create 内部异步 setData，首轮查询可能早于 foreignObject 创建。
+    if (!images.length && attempt < 5 && state.notesView === "mindmap") {
+      bindMindmapImageFit(attempt + 1);
+      return;
+    }
+    for (const image of images) {
+      if (image.complete || image.dataset.mindmapFitBound === "1") continue;
+      image.dataset.mindmapFitBound = "1";
+      image.addEventListener("load", queueMindmapFit, { once: true });
+      image.addEventListener("error", queueMindmapFit, { once: true });
+    }
+    if (images.length) queueMindmapFit();
+  }, attempt ? 60 : 0);
+}
+
 /** 各范围下导图根节点标题。 */
 function notesMindmapRootTitle() {
   if (state.notesScope === "video") {
@@ -3171,10 +3343,7 @@ function renderNotesMindmap() {
       ? notes.find((note) => note?.kind === "ai_video_note")
       : null;
   const tree = aiVideoNote
-    ? NOTE_MINDMAP.buildDocumentTree(
-        notesMindmapRootTitle(),
-        aiVideoNote.text || aiVideoNote.content || "",
-      )
+    ? buildMindmapDocumentTree(notesMindmapRootTitle(), aiVideoNote)
     : NOTE_MINDMAP.buildNotesTree(notesMindmapRootTitle(), notes, {
         labelFor: notesMindmapLabelFor,
       });
@@ -3193,6 +3362,7 @@ function renderNotesMindmap() {
         duration: 300,
       }, tree);
     }
+    bindMindmapImageFit();
     queueMindmapFit();
   } catch (error) {
     console.warn("笔记导图渲染失败", error);

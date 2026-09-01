@@ -2024,6 +2024,36 @@ kbd {
   fill: var(--text-muted);
 }
 
+.mindmap-visual-reference {
+  width: 180px;
+  margin: 2px 0;
+  padding: 0;
+}
+
+.mindmap-visual-reference-link,
+.mindmap-visual-reference-image {
+  display: block;
+  width: 180px;
+}
+
+.mindmap-visual-reference-image {
+  height: 101px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f172a;
+  object-fit: contain;
+}
+
+.mindmap-visual-reference figcaption {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* mermaid 代码块增强：源码兜底展示样式 */
 .mermaid-block {
   margin: 8px 0;

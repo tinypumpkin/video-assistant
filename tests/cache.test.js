@@ -88,10 +88,10 @@ test("超出上限时淘汰最旧的条目", async () => {
   ]);
 });
 
-test("淘汰只针对 digest_ 前缀，不碰设置与笔记", async () => {
+test("淘汰只针对 digest_ 前缀，不碰设置和其它本地数据", async () => {
   const storage = memoryStorage({
     video_digest_settings: { aiApiKey: "secret" },
-    video_digest_notes: [{ id: "note_1" }],
+    unrelated_local_data: { keep: true },
     digest_a: { timestamp: 1 },
     digest_b: { timestamp: 2 },
   });
@@ -99,7 +99,7 @@ test("淘汰只针对 digest_ 前缀，不碰设置与笔记", async () => {
   await CACHE.evict({ storage, maxEntries: 1, now: 10 });
 
   assert.ok(storage.data.video_digest_settings, "设置不应被淘汰");
-  assert.ok(storage.data.video_digest_notes, "笔记不应被淘汰");
+  assert.ok(storage.data.unrelated_local_data, "非缓存数据不应被淘汰");
   assert.ok(!storage.data.digest_a, "最旧的字幕缓存应被淘汰");
   assert.ok(storage.data.digest_b);
 });

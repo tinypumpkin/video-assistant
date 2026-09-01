@@ -13,6 +13,8 @@ importScripts(
   "lib/ai.js",
   "lib/ai-provider.js",
   "lib/visual-memos.js",
+  "lib/note-schema.js",
+  "lib/note-db.js",
   "lib/provider-router.js",
   "lib/concurrency.js",
 );
@@ -28,8 +30,6 @@ const AI_IDLE_TIMEOUT_MS = 50_000;
 const AI_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 // 加码重试的天花板。再往上多数模型会因超过自身输出上限直接拒绝请求。
 const MAX_OUTPUT_TOKENS = 32_768;
-const NOTES_STORAGE_KEY = "video_digest_notes";
-const NOTE_STORAGE_SAFE_BYTES = 7 * 1024 * 1024;
 
 // 内容脚本运行在 B 站页面上下文，不应读到密钥或缓存。
 chrome.storage.local
@@ -481,6 +481,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.action === "getNoteStats") {
     handleGetNoteStats()
+      .then(sendResponse)
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.action === "exportNotesV2") {
+    handleExportNotesV2(message.noteIds)
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
@@ -1701,6 +1708,10 @@ async function handleGenerateVideoNote(
     const citationCandidates = visualMemoReferences.map((reference, index) => ({
       ...reference,
       citationId: `cite_${String(index + 1).padStart(2, "0")}`,
+      transcriptWindow: visualTranscriptWindow(
+        transcript.segments,
+        reference.timestampSeconds,
+      ),
     }));
     const visionTranscriptContext = citationCandidates.length
       ? BILI_AI.buildChatTranscriptContext(transcript.segments, notePrompt, {
@@ -1734,6 +1745,8 @@ async function handleGenerateVideoNote(
     const visualReferences = citationCandidates.map((reference) => ({
       noteId: reference.noteId,
       dataUrl: reference.dataUrl,
+      memoText: reference.memoText,
+      transcriptWindow: reference.transcriptWindow,
       label: noteLanguage === "en"
         ? `[Memo screenshot #${reference.citationId} | ${BILI_TRANSCRIPT.formatTimestamp(reference.timestampSeconds)}]`
         : `[手记截图 #${reference.citationId}｜${BILI_TRANSCRIPT.formatTimestamp(reference.timestampSeconds)}]`,
@@ -1766,9 +1779,13 @@ async function handleGenerateVideoNote(
     const allowedCitationIds = citationCandidates.map((reference) => reference.citationId);
     // 只有实际走视觉请求时才允许模型留下截图引用标记。纯文本模型偶尔也会
     // 模仿提示词输出占位符，必须在入库前剔除，避免侧栏展示原始标记。
-    const text = BILI_VISUAL_MEMOS.sanitizeCitationMarkers(
+    const sanitizedText = BILI_VISUAL_MEMOS.sanitizeCitationMarkers(
       generatedText,
       completion.usedVisualReferences ? allowedCitationIds : [],
+    );
+    const text = BILI_VISUAL_MEMOS.relocateCitationMarkers(
+      sanitizedText,
+      completion.usedVisualReferences ? citationCandidates : [],
     );
     const usedCitationIds = BILI_VISUAL_MEMOS.parseCitationIds(text);
     const savedVisualReferences = usedCitationIds.map((citationId) => {
@@ -1815,6 +1832,30 @@ async function handleGenerateVideoNote(
   }
 }
 
+/** 为一张手记截图取出同一时间点附近的带时间戳字幕，作为图片的强定位上下文。 */
+function visualTranscriptWindow(segments, timestampSeconds, windowSeconds = 15) {
+  const list = (Array.isArray(segments) ? segments : [])
+    .map((segment) => ({
+      start: Math.max(0, Number(segment?.start) || 0),
+      text: String(segment?.text || "").trim(),
+    }))
+    .filter((segment) => segment.text);
+  if (!list.length) return "";
+  const target = Math.max(0, Number(timestampSeconds) || 0);
+  const window = Math.max(1, Number(windowSeconds) || 15);
+  let selected = list.filter((segment) => Math.abs(segment.start - target) <= window);
+  if (!selected.length) {
+    selected = [...list]
+      .sort((left, right) => Math.abs(left.start - target) - Math.abs(right.start - target))
+      .slice(0, 3)
+      .sort((left, right) => left.start - right.start);
+  }
+  return selected
+    .map((segment) => `[${BILI_TRANSCRIPT.formatTimestamp(segment.start)}] ${segment.text}`)
+    .join("\n")
+    .slice(0, 3_000);
+}
+
 async function analyzeStoredMemoImage(dataUrl) {
   if (typeof createImageBitmap !== "function" || typeof OffscreenCanvas !== "function") return null;
   try {
@@ -1838,12 +1879,12 @@ async function analyzeStoredMemoImage(dataUrl) {
 /** 旧版本保存的截图没有 imageMeta；生成时最多补算 12 张，避免升级后旧手记失效。 */
 async function prepareVisualMemoReferences(notes, resource) {
   const list = Array.isArray(notes) ? notes : [];
-  const legacy = list.filter((note) =>
+  const unanalyzed = list.filter((note) =>
     note?.kind === "memo" && note.site === resource.site &&
     String(note.bvid || note.videoId) === String(resource.videoId) &&
     Number(note.page || 1) === Number(resource.page || 1) &&
     typeof note.imageDataUrl === "string" && !note.imageMeta).slice(0, 12);
-  await Promise.all(legacy.map(async (note) => {
+  await Promise.all(unanalyzed.map(async (note) => {
     const meta = await analyzeStoredMemoImage(note.imageDataUrl);
     if (meta) note.imageMeta = meta;
   }));
@@ -2388,16 +2429,8 @@ async function handleExplainSelection(selectedText, transcriptContext, videoTitl
 const notesWriteQueue = BILI_CONCURRENCY.createSerialQueue();
 
 async function readNotes() {
-  const stored = await chrome.storage.local.get(NOTES_STORAGE_KEY);
-  return Array.isArray(stored[NOTES_STORAGE_KEY])
-    ? stored[NOTES_STORAGE_KEY]
-    : [];
-}
-
-function jsonByteLength(value) {
-  const source = JSON.stringify(value);
-  if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(source).byteLength;
-  return source.length;
+  if (!BILI_NOTE_DB?.supported?.()) throw new Error("当前环境不支持 IndexedDB 笔记存储");
+  return BILI_NOTE_DB.listNotes({ includeAssetData: true });
 }
 
 function pageNotes(notes, { offset, limit } = {}) {
@@ -2412,67 +2445,21 @@ function pageNotes(notes, { offset, limit } = {}) {
   return { notes: page, totalCount, hasMore: start + page.length < totalCount };
 }
 
-async function capNotesForStorage(notes, { noteLimit, protectedNoteId } = {}) {
-  const capped = notes.slice(0, noteLimit);
-  const removed = notes.slice(noteLimit);
-  let [allBytes, currentNotesBytes] = await Promise.all([
-    chrome.storage.local.getBytesInUse(null),
-    chrome.storage.local.getBytesInUse(NOTES_STORAGE_KEY),
-  ]);
-  let nonNoteBytes = Math.max(0, Number(allBytes) - Number(currentNotesBytes));
-  // 缓存等非笔记内容已超过安全线时，先淘汰字幕/概览缓存腾空间：
-  // 缓存可再生成（重新拉字幕就有），笔记不可再生，绝不为缓存牺牲笔记。
-  // 缓存清完还不够才拒绝保存。
-  if (nonNoteBytes >= NOTE_STORAGE_SAFE_BYTES) {
-    await clearDigestCache();
-    [allBytes, currentNotesBytes] = await Promise.all([
-      chrome.storage.local.getBytesInUse(null),
-      chrome.storage.local.getBytesInUse(NOTES_STORAGE_KEY),
-    ]);
-    nonNoteBytes = Math.max(0, Number(allBytes) - Number(currentNotesBytes));
-    if (nonNoteBytes >= NOTE_STORAGE_SAFE_BYTES) {
-      return { notes: capped, removed, storageBlocked: true };
-    }
-  }
-  while (
-    capped.length &&
-    nonNoteBytes + jsonByteLength({ [NOTES_STORAGE_KEY]: capped }) > NOTE_STORAGE_SAFE_BYTES
-  ) {
-    const oldest = capped.at(-1);
-    // 正在保存/编辑的条目不得被悄悄裁掉，直接反馈容量不足。
-    if (oldest?.id === protectedNoteId) {
-      return { notes: capped, removed, storageBlocked: true };
-    }
-    removed.push(capped.pop());
-  }
-  return { notes: capped, removed, storageBlocked: false };
-}
-
-/** 清空字幕/概览缓存（digest_*），为笔记保存腾空间。失败静默：下次重试时再清。 */
-async function clearDigestCache() {
-  try {
-    const all = await chrome.storage.local.get(null);
-    const keys = Object.keys(all).filter((key) => key.startsWith(BILI_CACHE.CACHE_PREFIX));
-    if (keys.length) await chrome.storage.local.remove(keys);
-  } catch (error) {
-    debugLog("[Video Assistant] 清理缓存失败：", error?.message || error);
-  }
-}
-
 function mutateNotes(mutate, { protectedNoteId } = {}) {
   return notesWriteQueue(async () => {
     const notes = await readNotes();
+    const before = new Map(notes.map((note) => [note.id, JSON.stringify(note)]));
     const next = mutate(notes);
     const settings = await getSettings();
-    const result = await capNotesForStorage(next, {
-      noteLimit: settings.noteLimit,
-      protectedNoteId,
-    });
-    if (result.storageBlocked && protectedNoteId) {
-      throw new Error("笔记存储已达到 7 MB 安全线，请导出或删除部分笔记后再保存。");
-    }
-    await chrome.storage.local.set({ [NOTES_STORAGE_KEY]: result.notes });
-    return result;
+    const capped = next.slice(0, settings.noteLimit);
+    const removed = next.slice(settings.noteLimit);
+    const nextIds = new Set(capped.map((note) => note.id));
+    const deletedIds = notes.filter((note) => !nextIds.has(note.id)).map((note) => note.id);
+    const changed = capped.filter(
+      (note) => !before.has(note.id) || before.get(note.id) !== JSON.stringify(note),
+    );
+    await BILI_NOTE_DB.applyChanges(changed, deletedIds);
+    return { notes: capped, removed, storageBlocked: false };
   });
 }
 
@@ -2486,20 +2473,31 @@ async function enforceStoredNoteLimits() {
 }
 
 async function handleGetNoteStats() {
-  const [notes, settings, notesBytes, totalBytes] = await Promise.all([
+  const [notes, settings, totalBytes, v2Stats] = await Promise.all([
     readNotes(),
     getSettings(),
-    chrome.storage.local.getBytesInUse(NOTES_STORAGE_KEY),
     chrome.storage.local.getBytesInUse(null),
+    BILI_NOTE_DB.stats(),
   ]);
   return {
     success: true,
     totalCount: notes.length,
     noteLimit: settings.noteLimit,
-    notesBytes,
+    storageVersion: 2,
+    notesBytes: v2Stats.assetBytes,
+    assetBytes: v2Stats.assetBytes,
+    assetCount: v2Stats.assetCount,
+    relationCount: v2Stats.linkCount,
     totalBytes,
-    safeBytes: NOTE_STORAGE_SAFE_BYTES,
+    safeBytes: BILI_NOTE_DB.DEFAULT_ASSET_BUDGET_BYTES,
   };
+}
+
+async function handleExportNotesV2(noteIds) {
+  if (!BILI_NOTE_DB?.supported?.()) {
+    return { success: false, error: "V2_UNAVAILABLE", message: "当前环境不支持 V2 笔记导出。" };
+  }
+  return { success: true, bundle: await BILI_NOTE_DB.exportBundle(noteIds) };
 }
 
 // 请模型把口语字幕整理成通顺的笔记。失败返回 null，笔记保持原始字幕。
@@ -2664,6 +2662,16 @@ function hydrateAiNoteVisualReferences(note, allNotes) {
     note.page || 1,
   );
   if (!resource) return note;
+  if (Array.isArray(note.visualReferences) && note.visualReferences.length) {
+    return {
+      ...note,
+      visualReferences: note.visualReferences.map((reference) => ({
+        ...reference,
+        timestamp: reference.timestamp || BILI_TRANSCRIPT.formatTimestamp(reference.timestampSeconds),
+        timestampedUrl: reference.timestampedUrl || canonicalVideoUrl(resource, reference.timestampSeconds),
+      })),
+    };
+  }
   const references = BILI_VISUAL_MEMOS.resolveCitations(
     allNotes,
     resource,
