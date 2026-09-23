@@ -2622,7 +2622,6 @@ function startAiVideoNoteEdit() {
   const editor = document.createElement("textarea");
   editor.className = "note-editor ai-note-document-editor";
   editor.rows = 16;
-  editor.maxLength = 12_000;
   editor.value = note.text || "";
   body.replaceWith(editor);
   aiVideoNoteEditSession = { note, body, editor };
@@ -2705,7 +2704,6 @@ function beginNoteEdit(note, textElement, actions) {
   const editor = document.createElement("textarea");
   editor.className = "note-editor";
   editor.rows = 4;
-  editor.maxLength = 12_000;
   editor.value = note.text || "";
 
   const editActions = document.createElement("div");

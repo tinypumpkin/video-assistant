@@ -69,6 +69,8 @@ const EN_TEXT = Object.freeze({
   "并发数": "Concurrency",
   "所有 AI 服务共用此并发上限，默认 3。": "All AI services share this limit; default: 3.",
   "单次请求超时（秒）": "Request timeout (seconds)",
+  "最大输出 token": "Maximum output tokens",
+  "默认 32768，所有 AI 服务共用。首次请求按任务估算，截断重试最多使用此额度；请勿超过所用模型支持的上限。": "Default: 32768, shared by all AI services. Initial budgets depend on the task; truncation retries use up to this limit. Do not exceed your model's supported limit.",
   "某项服务超时后会尝试下一项服务。": "The next service is tried after one service times out.",
   "保存模型配置": "Save model configuration",
   "保存时 Chrome 会一次性请求已配置 AI 服务的域名权限。仅在网络错误、超时、HTTP 408/409/425/429 或 5xx 时尝试下一项；密钥错误、模型错误和请求格式错误不会自动回退。": "Chrome requests host access for configured AI service domains in one step. Only network errors, timeouts, HTTP 408/409/425/429, or 5xx responses try the next service; key, model, and request-format errors never do.",
@@ -185,6 +187,7 @@ const captionProvidersStatus = document.getElementById("captionProvidersStatus")
 const aiProviderList = document.getElementById("aiProviderList");
 const aiConcurrency = document.getElementById("aiConcurrency");
 const aiTimeoutSeconds = document.getElementById("aiTimeoutSeconds");
+const aiMaxOutputTokens = document.getElementById("aiMaxOutputTokens");
 const noteLimit = document.getElementById("noteLimit");
 const noteSettingsStatus = document.getElementById("noteSettingsStatus");
 let uiLanguage = "zh-CN";
@@ -683,6 +686,7 @@ function currentAppSettings() {
     aiProviders: readAiProviders(),
     aiConcurrency: aiConcurrency.value,
     aiTimeoutSeconds: aiTimeoutSeconds.value,
+    aiMaxOutputTokens: aiMaxOutputTokens.value,
     youtubeCaptionProviders: readCaptionProviders(),
     youtubeEnabled: youtubeEnabled.checked,
     bilibiliEnabled: bilibiliEnabled.checked,
@@ -909,6 +913,7 @@ async function save() {
     await notifySiteScopeChanged(appSettings);
     aiConcurrency.value = appSettings.aiConcurrency;
     aiTimeoutSeconds.value = appSettings.aiTimeoutSeconds;
+    aiMaxOutputTokens.value = appSettings.aiMaxOutputTokens;
     aiProviders = appSettings.aiProviders;
     showStatus(globalStatus, "AI 服务已保存并授权");
   } catch (error) {
@@ -1085,6 +1090,7 @@ async function load() {
   aiProviders = settings.aiProviders;
   aiConcurrency.value = settings.aiConcurrency;
   aiTimeoutSeconds.value = settings.aiTimeoutSeconds;
+  aiMaxOutputTokens.value = settings.aiMaxOutputTokens;
   savedNoteLimit = settings.noteLimit;
   noteLimit.value = savedNoteLimit;
   youtubeCaptionProviders = settings.youtubeCaptionProviders;

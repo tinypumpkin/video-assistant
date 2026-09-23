@@ -28,8 +28,6 @@ const debugLog = (...args) => {
 // 硬超时管；之后 body 应连续到达，静默 50 秒即视为连接出了问题，不必可配。
 const AI_IDLE_TIMEOUT_MS = 50_000;
 const AI_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-// 加码重试的天花板。再往上多数模型会因超过自身输出上限直接拒绝请求。
-const MAX_OUTPUT_TOKENS = 32_768;
 
 // 内容脚本运行在 B 站页面上下文，不应读到密钥或缓存。
 chrome.storage.local
@@ -1007,6 +1005,7 @@ async function requestAiCompletion({
     settings: {
       ...entry.settings,
       aiTimeoutSeconds: appSettings.aiTimeoutSeconds,
+      aiMaxOutputTokens: appSettings.aiMaxOutputTokens,
     },
   }));
   const providers = VIDEO_PROVIDER_ROUTER.routeOrder(configured);
@@ -1043,7 +1042,7 @@ async function requestAiCompletion({
   throw error;
 }
 
-// 单个 Provider 内部仍保留空响应的自愈重试；用尽后才交给有序回退路由判断。
+// 空响应和非空截断响应都先在当前 Provider 内重试，再交给回退路由。
 async function requestProviderCompletion(
   settings,
   { messages, images, visualReferences = [], maxTokens, temperature, responseFormat },
@@ -1057,7 +1056,8 @@ async function requestProviderCompletion(
   await ensureHostPermission(settings.aiBaseUrl);
 
   let format = responseFormat;
-  let tokens = maxTokens;
+  const outputLimit = BILI_SETTINGS.normalize(settings).aiMaxOutputTokens;
+  let tokens = Math.min(outputLimit, Math.max(1, Number(maxTokens) || 4096));
   let diagnosis = null;
   const providerMessages = settings.supportsVision
     ? (visualReferences.length
@@ -1065,7 +1065,7 @@ async function requestProviderCompletion(
         : BILI_AI_PROVIDER.attachImagesToLastUserMessage(settings.protocol, messages, images))
     : messages;
 
-  // 空响应有两种能自愈的成因，各给一次机会，所以最多三轮。
+  // 最多三轮；重试使用原始请求，避免把残缺 JSON 或重复章节拼入结果。
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const request = BILI_AI_PROVIDER.buildChatRequest({
       settings,
@@ -1077,9 +1077,9 @@ async function requestProviderCompletion(
     const data = await sendAiRequest(settings, request);
 
     const text = BILI_AI_PROVIDER.parseChatResponse(settings.protocol, data);
-    if (text.trim()) return { text, settings };
-
     diagnosis = BILI_AI_PROVIDER.diagnoseEmptyResponse(settings.protocol, data);
+    // 达到输出上限时通常已有正文，不能把这部分当作完整结果保存。
+    if (text.trim() && diagnosis.reason !== "TRUNCATED") return { text, settings };
 
     if (format && diagnosis.retryWithoutJsonMode) {
       debugLog("[Bilibili Digest] JSON 模式返回空，脱掉 response_format 重试");
@@ -1087,9 +1087,9 @@ async function requestProviderCompletion(
       continue;
     }
 
-    // 预算被吃光了就加码重试——max_tokens 按实际生成计费，加码不额外花钱。
-    if (diagnosis.retryWithMoreTokens && tokens < MAX_OUTPUT_TOKENS) {
-      tokens = Math.min(tokens * 4, MAX_OUTPUT_TOKENS);
+    // 重试会重新生成并产生费用，因此限定次数与预算上限。
+    if (attempt < 2 && diagnosis.retryWithMoreTokens && tokens < outputLimit) {
+      tokens = attempt === 1 ? outputLimit : Math.min(tokens * 4, outputLimit);
       debugLog("[Bilibili Digest] 输出被截断，放大预算重试：", tokens);
       continue;
     }
@@ -1098,7 +1098,7 @@ async function requestProviderCompletion(
   }
 
   const error = new Error(diagnosis.message);
-  error.code = "EMPTY_AI_RESPONSE";
+  error.code = diagnosis.reason === "TRUNCATED" ? "AI_OUTPUT_TRUNCATED" : "EMPTY_AI_RESPONSE";
   error.reason = diagnosis.reason;
   throw error;
 }
@@ -1411,6 +1411,7 @@ async function streamAiCompletion({ messages, images = [], maxTokens, temperatur
     settings: {
       ...entry.settings,
       aiTimeoutSeconds: appSettings.aiTimeoutSeconds,
+      aiMaxOutputTokens: appSettings.aiMaxOutputTokens,
     },
   }));
   const providers = VIDEO_PROVIDER_ROUTER.routeOrder(configured);
@@ -1759,9 +1760,9 @@ async function handleGenerateVideoNote(
       ],
       visualReferences,
       maxTokens: BILI_AI.estimateOutputTokens(transcriptContext.length, {
-        ratio: 0.18,
-        floor: 1800,
-        ceiling: 6000,
+        ratio: 0.35,
+        floor: 4096,
+        ceiling: 8192,
       }),
       temperature: 0.2,
     });
@@ -1769,8 +1770,7 @@ async function handleGenerateVideoNote(
       .trim()
       .replace(/^```(?:markdown|md)?\s*\n?/i, "")
       .replace(/\n?```\s*$/i, "")
-      .trim()
-      .slice(0, 12_000);
+      .trim();
     if (!generatedText) {
       return { success: false, error: "EMPTY_AI_NOTE", message: "模型没有生成笔记内容，请重试。" };
     }
@@ -2871,7 +2871,7 @@ async function handleClearNotes({ site = "bilibili", bvid, scope = "video" }) {
 }
 
 async function handleUpdateNote(noteId, text) {
-  const nextText = String(text || "").trim().slice(0, 12_000);
+  const nextText = String(text || "").trim();
   if (!nextText) {
     return { success: false, error: "EMPTY_NOTE", message: "笔记内容不能为空。" };
   }

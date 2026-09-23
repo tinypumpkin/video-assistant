@@ -180,6 +180,7 @@ var BILI_SETTINGS = (() => {
   const LIMITS = Object.freeze({
     concurrency: Object.freeze({ min: 1, max: 8, default: 3 }),
     timeoutSeconds: Object.freeze({ min: 30, max: 600, default: 120 }),
+    maxOutputTokens: Object.freeze({ min: 1024, max: 262144, default: 32768 }),
     // 笔记正文长度差异很大，条目数只是保留策略；实际写入还会由 background
     // 的 7 MB 安全线兜底，避免挤满 chrome.storage.local。
     noteLimit: Object.freeze({ min: 1, max: 400, default: 100 }),
@@ -193,6 +194,7 @@ var BILI_SETTINGS = (() => {
     aiModel: DEFAULT_PRESET.model,
     aiConcurrency: LIMITS.concurrency.default,
     aiTimeoutSeconds: LIMITS.timeoutSeconds.default,
+    aiMaxOutputTokens: LIMITS.maxOutputTokens.default,
     // 字幕轨优先级：UP 主中文 > AI 中文 > 英文（见 lib/bili-api.js）。
     subtitleLangPreference: Object.freeze([
       "zh-CN",
@@ -212,6 +214,7 @@ var BILI_SETTINGS = (() => {
     ]),
     aiConcurrency: LIMITS.concurrency.default,
     aiTimeoutSeconds: LIMITS.timeoutSeconds.default,
+    aiMaxOutputTokens: LIMITS.maxOutputTokens.default,
     youtubeCaptionProviders: Object.freeze([
       Object.freeze({ providerId: "local", apiKey: "" }),
     ]),
@@ -480,6 +483,7 @@ var BILI_SETTINGS = (() => {
       availableModels: normalizeAvailableModels(source.availableModels),
       aiConcurrency: clampNumber(source.aiConcurrency, LIMITS.concurrency),
       aiTimeoutSeconds: clampNumber(source.aiTimeoutSeconds, LIMITS.timeoutSeconds),
+      aiMaxOutputTokens: clampNumber(source.aiMaxOutputTokens, LIMITS.maxOutputTokens),
       subtitleLangPreference: normalizeLangPreference(source.subtitleLangPreference),
     };
   }
@@ -528,6 +532,10 @@ var BILI_SETTINGS = (() => {
       ),
       subtitleLangPreference: normalizeLangPreference(
         source.subtitleLangPreference ?? primaryProvider.subtitleLangPreference,
+      ),
+      aiMaxOutputTokens: clampNumber(
+        source.aiMaxOutputTokens ?? primaryProvider.aiMaxOutputTokens,
+        LIMITS.maxOutputTokens,
       ),
       // Supadata 单密钥是旧设置格式；首次读取时无感升级为列表的第一项。
       youtubeCaptionProviders: normalizeYoutubeCaptionProviders(

@@ -118,6 +118,11 @@
             <input id="aiTimeoutSeconds" type="number" min="30" max="600" step="10" />
             <span class="field-hint">某项服务超时后会尝试下一项服务。</span>
           </label>
+          <label class="field compact-field">
+            <span class="field-label">最大输出 token</span>
+            <input id="aiMaxOutputTokens" type="number" min="1024" max="262144" step="1" />
+            <span class="field-hint">默认 32768，所有 AI 服务共用。首次请求按任务估算，截断重试最多使用此额度；请勿超过所用模型支持的上限。</span>
+          </label>
         </div>
 
         <div class="actions">
