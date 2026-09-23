@@ -468,8 +468,6 @@ test("模型选择使用独立 select，不再受 datalist 当前值过滤", () 
   assert.match(script, /modelOptions.className\s*=\s*"model-option-select"/);
   assert.match(script, /setModelOptions/);
   assert.match(script, /availableModels/);
-  assert.match(script, /deepseek-v4-flash/);
-  assert.match(script, /gpt-5\.6-terra/);
 });
 
 test("AI 服务支持有序多项、拖动排序与局部密钥掩码", () => {

@@ -284,21 +284,12 @@ function modelOptionValues(card) {
 }
 
 function setModelOptions(card, input, { showCount = false } = {}) {
-  const preset = BILI_SETTINGS.presetById(card.preset.value);
   const current = card.model.value.trim();
-  const models = [
-    ...new Set(
-      [
-        "deepseek-v4-flash",
-        "gpt-5.6-terra",
-        preset?.model,
-        current,
-        ...(Array.isArray(input) ? input : []),
-      ]
-        .filter((model) => typeof model === "string" && model.trim())
-        .map((model) => model.trim()),
-    ),
-  ];
+  // 下拉框只列出此服务已拉取的模型；手动输入保留在文本框中。
+  const models = [...new Set((Array.isArray(input) ? input : [])
+    .filter((model) => typeof model === "string" && model.trim())
+    .map((model) => model.trim()))];
+  card.availableModels = models;
 
   card.modelOptions.textContent = "";
   const placeholder = document.createElement("option");
@@ -315,14 +306,8 @@ function setModelOptions(card, input, { showCount = false } = {}) {
 
   if (showCount && input.length) {
     card.modelsHint.textContent = `已获取 ${input.length} 个模型。`;
-  } else if (preset?.id === "deepseek" && current === preset.model) {
-    card.modelsHint.textContent = translateText(
-      "DeepSeek 默认模型：deepseek-v4-flash，可直接保存或改为其他模型。",
-    );
   } else {
-    card.modelsHint.textContent = translateText(
-      "内置 deepseek-v4-flash 与 gpt-5.6-terra，也可手动填写或从服务端拉取。",
-    );
+    card.modelsHint.textContent = translateText("可手动填写，或从服务端拉取。");
   }
 }
 
@@ -346,7 +331,7 @@ function readProvider(card, presetId = card.preset.value) {
     aiBaseUrl: useCustomFields ? card.baseUrl.value : undefined,
     aiApiKey: apiKeyValue(card.apiKey),
     aiModel: card.model.value,
-    availableModels: modelOptionValues(card),
+    availableModels: card.availableModels || [],
     supportsVision: card.supportsVision === true,
   });
 }
@@ -795,8 +780,13 @@ async function fetchModels(card) {
     }
     const models = BILI_AI_PROVIDER.parseModelsResponse(data);
     if (!models.length) throw new Error("服务没有返回模型列表，请手动填写。");
+    // 请求期间可能切换服务商或密钥；旧请求不能覆盖新服务商的列表。
+    const active = readProvider(card);
+    if (active.presetId !== provider.presetId ||
+        active.aiBaseUrl !== provider.aiBaseUrl ||
+        active.aiApiKey !== provider.aiApiKey) return;
     setModelOptions(card, models, { showCount: true });
-    if (!card.model.value) card.model.value = models[0];
+    if (!models.includes(card.model.value.trim())) card.model.value = models[0];
     card.modelOptions.value = card.model.value;
     showStatus(card.status, "模型列表已更新");
   } catch (error) {
